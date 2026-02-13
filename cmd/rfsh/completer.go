@@ -50,7 +50,7 @@ func (c *Completer) Do(line []rune, pos int) ([][]rune, int) {
 func (c *Completer) completeCommand(words []string) ([][]rune, int) {
 	commands := []string{
 		"cd", "ls", "ll", "pwd", "dump", "tree", "find", "open",
-		"flat", "cache", "clear", "help", "exit", "quit",
+		"cache", "clear", "help", "exit", "quit",
 	}
 
 	prefix := ""
@@ -84,7 +84,7 @@ func (c *Completer) completePath(partial string) ([][]rune, int) {
 	}
 
 	// Split partial into base path, separator type, and prefix to complete
-	base, separator, prefix := c.splitForCompletion(partial)
+	base, separator, prefix := splitForCompletion(partial)
 
 	// Resolve the base path (or use cwd if empty)
 	var entries []*rvfs.Entry
@@ -154,7 +154,7 @@ func completionSuffix(entry *rvfs.Entry, separator rune) string {
 //   "Systems/1" → ("Systems", '/', "1")
 //   "Status" → ("", 0, "Status")
 //   "" → ("", 0, "")
-func (c *Completer) splitForCompletion(partial string) (base string, separator rune, prefix string) {
+func splitForCompletion(partial string) (base string, separator rune, prefix string) {
 	// Find the last separator (/ or [)
 	lastSlash := strings.LastIndex(partial, "/")
 	lastBracket := strings.LastIndex(partial, "[")

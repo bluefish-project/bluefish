@@ -59,7 +59,7 @@ func (c *CompletionListener) prefetch(partial string) {
 	}
 
 	// Split partial to find the base path
-	base, _ := c.splitForCompletion(partial)
+	base, _, _ := splitForCompletion(partial)
 
 	// If we have a base path, try to resolve and fetch it
 	if base != "" {
@@ -73,28 +73,4 @@ func (c *CompletionListener) prefetch(partial string) {
 			c.nav.vfs.Get(target.ResourcePath)
 		}
 	}
-}
-
-// splitForCompletion splits a partial path into base and prefix
-func (c *CompletionListener) splitForCompletion(partial string) (base, prefix string) {
-	// Find the last separator (/ or [)
-	lastSlash := strings.LastIndex(partial, "/")
-	lastBracket := strings.LastIndex(partial, "[")
-
-	// Find the rightmost separator
-	lastSep := -1
-	if lastSlash > lastSep {
-		lastSep = lastSlash
-	}
-	if lastBracket > lastSep {
-		lastSep = lastBracket
-	}
-
-	if lastSep == -1 {
-		// No separator - completing at current level
-		return "", partial
-	}
-
-	// Split at the separator
-	return partial[:lastSep], partial[lastSep+1:]
 }

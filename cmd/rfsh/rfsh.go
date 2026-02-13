@@ -63,9 +63,8 @@ func loadConfig(path string) (*Config, error) {
 
 // Navigator manages shell state
 type Navigator struct {
-	vfs      rvfs.VFS
-	cwd      string
-	flatView bool
+	vfs rvfs.VFS
+	cwd string
 }
 
 // NewNavigator creates a navigator
@@ -138,47 +137,46 @@ func (n *Navigator) open(target string) error {
 		return fmt.Errorf("open requires a target path")
 	}
 
-	// Special case: "open ." canonicalizes the current composite path
-	if target == "." {
-		// Resolve current path to get its canonical resource path
-		resolvedTarget, err := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
-		if err != nil {
-			return err
-		}
-
-		// Navigate to the canonical path
-		n.cwd = resolvedTarget.ResourcePath
-		entries, _ := n.vfs.ListAll(n.cwd)
-		summary := getEntriesSummary(entries)
-		fmt.Printf("%s  (%s)\n", n.cwd, summary)
-		return nil
-	}
-
 	// Resolve the target
 	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
 	if err != nil {
-		return err
+		// Special case: "open ." from a property path
+		if target == "." {
+			resolvedTarget, err = n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
 	}
 
 	switch resolvedTarget.Type {
 	case rvfs.TargetResource:
-		// Already a resource - navigate to it
 		n.cwd = resolvedTarget.ResourcePath
 		entries, _ := n.vfs.ListAll(n.cwd)
-		summary := getEntriesSummary(entries)
-		fmt.Printf("%s  (%s)\n", n.cwd, summary)
-		return nil
+		fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
 
 	case rvfs.TargetLink:
-		// Follow the link to its canonical destination
 		n.cwd = resolvedTarget.ResourcePath
 		entries, _ := n.vfs.ListAll(n.cwd)
-		summary := getEntriesSummary(entries)
-		fmt.Printf("%s  (%s)\n", n.cwd, summary)
-		return nil
+		fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
 
 	case rvfs.TargetProperty:
-		return fmt.Errorf("cannot open property: %s", target)
+		prop := resolvedTarget.Property
+		if prop.Type == rvfs.PropertyLink {
+			// Follow the link
+			n.cwd = prop.LinkTarget
+			entries, _ := n.vfs.ListAll(n.cwd)
+			fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
+		} else if target == "." {
+			// "open ." from a property path — navigate to containing resource
+			n.cwd = resolvedTarget.Resource.Path
+			entries, _ := n.vfs.ListAll(n.cwd)
+			fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
+		} else {
+			return fmt.Errorf("cannot open property %s (not a link; use 'cd' to navigate into objects)", target)
+		}
 	}
 
 	return nil
@@ -486,7 +484,20 @@ func formatSimpleValue(value any) string {
 
 // tree displays tree view
 func (n *Navigator) tree(depth int) error {
-	output := n.buildTree(n.cwd, "", depth, 0)
+	resolved, err := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+	if err != nil {
+		return err
+	}
+
+	var entries []*rvfs.Entry
+	switch resolved.Type {
+	case rvfs.TargetResource, rvfs.TargetLink:
+		entries, _ = n.vfs.ListAll(resolved.ResourcePath)
+	case rvfs.TargetProperty:
+		entries = entriesFromProperty(resolved.Property)
+	}
+
+	output := n.buildTreeFromEntries(n.cwd, entries, "", depth, 0)
 	if output == "" {
 		fmt.Println("(empty)")
 	} else {
@@ -495,13 +506,8 @@ func (n *Navigator) tree(depth int) error {
 	return nil
 }
 
-func (n *Navigator) buildTree(path, prefix string, maxDepth, currentDepth int) string {
+func (n *Navigator) buildTreeFromEntries(basePath string, entries []*rvfs.Entry, prefix string, maxDepth, currentDepth int) string {
 	if currentDepth >= maxDepth {
-		return ""
-	}
-
-	entries, err := n.vfs.ListAll(path)
-	if err != nil {
 		return ""
 	}
 
@@ -523,7 +529,27 @@ func (n *Navigator) buildTree(path, prefix string, maxDepth, currentDepth int) s
 			if isLast {
 				extension = "    "
 			}
-			subtree := n.buildTree(entry.Path, prefix+extension, maxDepth, currentDepth+1)
+
+			// Resolve child to get its entries
+			childPath := entry.Path
+			if childPath == "" {
+				childPath = basePath + "/" + entry.Name
+			}
+
+			resolved, err := n.vfs.ResolveTarget(rvfs.RedfishRoot, childPath)
+			if err != nil {
+				continue
+			}
+
+			var childEntries []*rvfs.Entry
+			switch resolved.Type {
+			case rvfs.TargetResource, rvfs.TargetLink:
+				childEntries, _ = n.vfs.ListAll(resolved.ResourcePath)
+			case rvfs.TargetProperty:
+				childEntries = entriesFromProperty(resolved.Property)
+			}
+
+			subtree := n.buildTreeFromEntries(childPath, childEntries, prefix+extension, maxDepth, currentDepth+1)
 			if subtree != "" {
 				lines = append(lines, subtree)
 			}
@@ -533,15 +559,26 @@ func (n *Navigator) buildTree(path, prefix string, maxDepth, currentDepth int) s
 	return strings.Join(lines, "\n")
 }
 
-// find searches for properties
+// find searches for properties recursively
 func (n *Navigator) find(pattern string) error {
 	re, err := regexp.Compile("(?i)" + pattern)
 	if err != nil {
 		return fmt.Errorf("invalid pattern: %v", err)
 	}
 
+	resolved, err := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+	if err != nil {
+		return err
+	}
+
 	var results []string
-	n.findRecursive(n.cwd, "", re, &results, 0)
+
+	switch resolved.Type {
+	case rvfs.TargetResource, rvfs.TargetLink:
+		n.findInResource(resolved.ResourcePath, "", re, &results, 0)
+	case rvfs.TargetProperty:
+		findInProperty(resolved.Property, "", re, &results)
+	}
 
 	if len(results) == 0 {
 		fmt.Printf("No matches found for '%s'\n", pattern)
@@ -554,27 +591,53 @@ func (n *Navigator) find(pattern string) error {
 	return nil
 }
 
-func (n *Navigator) findRecursive(path, prefix string, re *regexp.Regexp, results *[]string, depth int) {
+func (n *Navigator) findInResource(resourcePath, prefix string, re *regexp.Regexp, results *[]string, depth int) {
 	if depth > 5 {
 		return
 	}
 
-	properties, err := n.vfs.ListProperties(path)
+	resource, err := n.vfs.Get(resourcePath)
 	if err != nil {
 		return
 	}
 
-	for _, prop := range properties {
-		fullPath := prop.Name
-		if prefix != "" {
-			fullPath = prefix + "." + prop.Name
-		}
+	// Search all properties in this resource
+	for _, prop := range resource.Properties {
+		findInProperty(prop, prefix, re, results)
+	}
 
-		if re.MatchString(prop.Name) {
-			*results = append(*results,
-				fmt.Sprintf("%s = %s",
-					colorYellow.Sprint(fullPath),
-					formatPropertyValue(prop)))
+	// Recurse into child resources
+	for _, child := range resource.Children {
+		childPrefix := child.Name
+		if prefix != "" {
+			childPrefix = prefix + "/" + child.Name
+		}
+		n.findInResource(child.Target, childPrefix, re, results, depth+1)
+	}
+}
+
+func findInProperty(prop *rvfs.Property, prefix string, re *regexp.Regexp, results *[]string) {
+	fullPath := prop.Name
+	if prefix != "" {
+		fullPath = prefix + "/" + prop.Name
+	}
+
+	if re.MatchString(prop.Name) {
+		*results = append(*results,
+			fmt.Sprintf("%s = %s",
+				colorYellow.Sprint(fullPath),
+				formatPropertyValue(prop)))
+	}
+
+	// Recurse into children
+	switch prop.Type {
+	case rvfs.PropertyObject:
+		for _, child := range prop.Children {
+			findInProperty(child, fullPath, re, results)
+		}
+	case rvfs.PropertyArray:
+		for _, elem := range prop.Elements {
+			findInProperty(elem, fullPath, re, results)
 		}
 	}
 }
@@ -765,11 +828,7 @@ func main() {
 }
 
 func getPrompt(nav *Navigator) string {
-	mode := ""
-	if nav.flatView {
-		mode = " [flat]"
-	}
-	return fmt.Sprintf("%s%s> ", colorBoldBlue.Sprint(nav.cwd), mode)
+	return fmt.Sprintf("%s> ", colorBoldBlue.Sprint(nav.cwd))
 }
 
 func executeCommand(nav *Navigator, cmd string, args []string) error {
@@ -826,15 +885,6 @@ func executeCommand(nav *Navigator, cmd string, args []string) error {
 		}
 		return nav.find(args[0])
 
-	case "flat":
-		nav.flatView = !nav.flatView
-		mode := "disabled"
-		if nav.flatView {
-			mode = "enabled"
-		}
-		fmt.Printf("Flat view %s\n", mode)
-		return nav.ls("")
-
 	case "cache":
 		if len(args) == 0 {
 			paths := nav.vfs.GetKnownPaths()
@@ -872,8 +922,8 @@ func printHelp() {
 rfsh - Redfish Shell Commands:
 
 Navigation:
-  cd <path>       Navigate to resource (follows links)
-  open <path>     Navigate and follow links to canonical destination
+  cd <path>       Navigate to resource or property
+  open <path>     Follow links to canonical resource destination
   pwd             Print working directory
   ls [path]       List entries (short form)
   ll [path]       Show formatted content (long form, YAML-style)
@@ -881,10 +931,9 @@ Navigation:
 Viewing:
   dump [path]     Show raw JSON
   tree [depth]    Show tree view (default: 2)
-  find <pattern>  Search for properties
+  find <pattern>  Search properties recursively (includes children)
 
 Settings:
-  flat            Toggle flat property view
   clear           Clear screen
   cache [cmd]     Manage cache (clear, list)
 
@@ -895,16 +944,20 @@ Control:
 Path Notation:
   /               Path separator (Systems/1/Status/Health)
   [n]             Array index (BootOrder[2])
+  ..              Parent directory
+  ~               Root (/redfish/v1)
 
 Examples:
   ls              List everything in current resource
-  ls Systems      Show Systems entry
-  ll Systems      Show Systems formatted content
   ll Status       Show Status formatted (YAML-style)
-  ll Status/Health              Show Status.Health value
+  ll Status/Health              Show a nested property value
   dump Status                   Show Status as raw JSON
   cd Systems/1                  Navigate to Systems/1
-  cd Links/Drives[0]            Follow link to drive resource
+  cd Status                     Navigate into a property object
+  cd ..                         Go up one level
+  open Links/Chassis[0]         Follow PropertyLink to chassis resource
+  open .                        Return to containing resource from a property
+  find Health                   Search recursively for matching properties
 
 Keyboard Shortcuts:
   Tab             Auto-complete (smart path resolution)

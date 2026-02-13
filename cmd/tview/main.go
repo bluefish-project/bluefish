@@ -57,7 +57,7 @@ func (a *App) buildUI() {
 	// Status bar at top
 	a.status = tview.NewTextView().
 		SetDynamicColors(true).
-		SetText("[yellow::b]RFUI[-:-:-] | ↑↓:navigate | Enter:expand/jump | Space:toggle | /:filter | q:quit")
+		SetText("[yellow::b]RFUI[-:-:-] | ↑↓:navigate | Enter:expand/jump | Space:toggle | r:refresh | q:quit")
 
 	// Tree view on left
 	a.tree = tview.NewTreeView()
@@ -140,6 +140,10 @@ func (a *App) buildUI() {
 			// Go up to parent
 			a.goUp()
 			return nil
+		case 'r':
+			// Refresh: clear cache, re-fetch, rebuild tree
+			a.refresh()
+			return nil
 		case 'J':
 			// Scroll details panel down
 			row, col := a.details.GetScrollOffset()
@@ -193,7 +197,7 @@ func (a *App) buildUI() {
 func (a *App) makeHelpBar() *tview.TextView {
 	return tview.NewTextView().
 		SetDynamicColors(true).
-		SetText("[gray]h:collapse | j/k:nav | l:expand | s:subtree | u:up | b/⌫:back | ~:home | Enter:follow | J/K:scroll | q:quit[-]")
+		SetText("[gray]h:collapse | j/k:nav | l:expand | s:subtree | u:up | b/⌫:back | ~:home | r:refresh | Enter:follow | J/K:scroll | q:quit[-]")
 }
 
 func (a *App) buildTree() {
@@ -713,6 +717,15 @@ func (a *App) goUp() {
 			a.status.SetText(fmt.Sprintf("[yellow::b]RFUI[-:-:-] | Parent: [cyan]%s[-]", a.basePath))
 		}
 	}
+}
+
+func (a *App) refresh() {
+	a.vfs.Clear()
+	a.rootStack = nil
+	a.fullRoot = nil
+	a.basePath = "/redfish/v1"
+	a.buildTree()
+	a.status.SetText("[yellow::b]RFUI[-:-:-] | [green]Refreshed[-]")
 }
 
 func (a *App) goHome() {
