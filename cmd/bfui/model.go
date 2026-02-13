@@ -671,7 +671,7 @@ func placeOverlay(bgWidth, bgHeight int, overlay, background string) string {
 }
 
 func (m Model) viewStatusBar() string {
-	title := statusStyle.Render("RFUI")
+	title := statusStyle.Render("BFUI")
 
 	var info string
 	if m.statusMsg != "" {

@@ -4,15 +4,15 @@ Three tools for navigating Redfish BMC APIs, built on a shared virtual filesyste
 
 | Tool | Description |
 |------|-------------|
-| **rfsh** | Interactive shell with `cd`, `ls`, `ll`, tab completion, and action invocation |
-| **rfui** | Bubble Tea TUI with tree browser, search overlay, and action modal |
+| **bfsh** | Interactive shell with `cd`, `ls`, `ll`, tab completion, and action invocation |
+| **bfui** | Bubble Tea TUI with tree browser, search overlay, and action modal |
 | **tview** | Lightweight tview-based tree browser |
 
 ## Quick Start
 
 ```bash
-go build -o rfsh ./cmd/rfsh
-go build -o rfui ./cmd/rfui
+go build -o bfsh ./cmd/bfsh
+go build -o bfui ./cmd/bfui
 go build -o tview ./cmd/tview
 ```
 
@@ -26,8 +26,8 @@ insecure: true
 ```
 
 ```bash
-./rfsh config.yaml     # Shell
-./rfui config.yaml     # TUI (Bubble Tea)
+./bfsh config.yaml     # Shell
+./bfui config.yaml     # TUI (Bubble Tea)
 ./tview config.yaml    # TUI (tview)
 ```
 
@@ -35,8 +35,8 @@ insecure: true
 
 ```mermaid
 graph TD
-    rfsh["rfsh<br/><i>CLI shell</i>"]
-    rfui["rfui<br/><i>Bubble Tea TUI</i>"]
+    bfsh["bfsh<br/><i>CLI shell</i>"]
+    bfui["bfui<br/><i>Bubble Tea TUI</i>"]
     tview["tview<br/><i>tview TUI</i>"]
 
     vfs["rvfs.VFS<br/><i>ResolveTarget / Get / Post / ListAll</i>"]
@@ -45,8 +45,8 @@ graph TD
     client["Client<br/><i>HTTP, session auth, TLS</i>"]
     bmc["BMC<br/><i>Redfish API</i>"]
 
-    rfsh --> vfs
-    rfui --> vfs
+    bfsh --> vfs
+    bfui --> vfs
     tview --> vfs
     vfs --> cache
     cache --> parser
@@ -74,7 +74,7 @@ graph LR
 
 Path resolution walks segments left to right, switching between resource mode (check Children, then Properties) and property mode (descend into property children). PropertyLinks followed mid-path trigger a fetch and re-enter resource mode.
 
-## rfsh — Shell
+## bfsh — Shell
 
 ### Navigation
 
@@ -110,6 +110,14 @@ Reset ResetType=GracefulShutdown    Invoke with confirmation
 !                         Exit action mode
 ```
 
+### Cache & Fetching
+
+```
+scrape                    Crawl all reachable resources from cwd
+refresh [path]            Re-fetch a resource (invalidate + fetch + display)
+cache / cache list / cache clear
+```
+
 ### Tab Completion
 
 Context-aware completion for resource children, property names, and array indices.
@@ -117,17 +125,16 @@ Context-aware completion for resource children, property names, and array indice
 ### Other
 
 ```
-cache / cache list / cache clear
 clear                     Clear screen
 help                      Show help
 ```
 
-## rfui — Bubble Tea TUI
+## bfui — Bubble Tea TUI
 
 Split-pane browser: tree (40%) on the left, scrollable details (60%) on the right. Breadcrumb bar at the top, help bar at the bottom.
 
 ```
-┌─ RFUI  Subtree: /redfish/v1/Systems/1 ──────────────────────┐
+┌─ BFUI  Subtree: /redfish/v1/Systems/1 ──────────────────────┐
 │ redfish > v1 > Systems > 1                                   │
 ├──────── Tree ─────────┬──────────── Details ─────────────────┤
 │ ▾ Status {2}          │ Path: .../Systems/1/Status           │
@@ -222,10 +229,10 @@ Oem/Supermicro/NodeManager/Id        Link-following mid-path
 
 ```
 cmd/
-  rfsh/             CLI shell
-    rfsh.go           REPL, navigator, commands, action mode
+  bfsh/             CLI shell
+    bfsh.go           REPL, navigator, commands, action mode
     completer.go      Tab completion
-  rfui/             Bubble Tea TUI
+  bfui/             Bubble Tea TUI
     main.go           Entry point, config
     model.go          Root model, Init/Update/View, layout
     tree.go           Flat-list tree with expand/collapse
@@ -257,4 +264,4 @@ go test ./...
 go vet ./...
 ```
 
-Cache files (`.rfsh_cache_<hostname>.json`) are created in the working directory and gitignored.
+Cache files (`.bfsh_cache_<hostname>.json`) are created in the working directory and gitignored.

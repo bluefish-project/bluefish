@@ -9,26 +9,49 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"bluefish/rvfs"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/chzyer/readline"
-	"github.com/fatih/color"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
 
-// Colors for output
+// Styles using ANSI colors 0–15 (follow terminal theme)
 var (
-	colorCyan     = color.New(color.FgCyan)
-	colorGreen    = color.New(color.FgGreen)
-	colorPurple   = color.New(color.FgMagenta)
-	colorYellow   = color.New(color.FgYellow)
-	colorBold     = color.New(color.Bold)
-	colorBoldBlue = color.New(color.FgBlue, color.Bold)
-	colorBoldRed  = color.New(color.FgRed, color.Bold)
-	colorRed      = color.New(color.FgRed)
+	childStyle      = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(12)).Bold(true)
+	linkStyle       = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(6))
+	objectStyle     = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(5))
+	propStyle       = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(2))
+	dimStyle        = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(8))
+	boldStyle       = lipgloss.NewStyle().Bold(true)
+	warnStyle       = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(3))
+	errorStyle      = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(1)).Bold(true)
+	promptPathStyle = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(12)).Bold(true)
+	promptActStyle  = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(1)).Bold(true)
+
+	// Value styles
+	stringValStyle = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(2))
+	numberValStyle = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(4))
+	trueValStyle   = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(10))
+	falseValStyle  = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(1))
+	nullValStyle   = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(8))
+
+	// Health-semantic styles
+	healthOKStyle       = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(10))
+	healthWarnStyle     = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(11))
+	healthCriticalStyle = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(9)).Bold(true)
 )
+
+// healthKeys are property names that get semantic coloring
+var healthKeys = map[string]bool{
+	"Health":       true,
+	"HealthRollup": true,
+	"State":        true,
+	"Status":       true,
+}
 
 // Config holds connection configuration
 type Config struct {
@@ -205,6 +228,7 @@ func (n *Navigator) ls(target string) error {
 
 	entries := n.listResolved(resolved)
 	n.printShortListingAll(entries)
+	n.printResourceAge(resolved)
 	return nil
 }
 
@@ -307,7 +331,10 @@ func (n *Navigator) ll(target string) error {
 
 	switch resolved.Type {
 	case rvfs.TargetResource, rvfs.TargetLink:
-		return n.showResource(resolved.ResourcePath)
+		if err := n.showResource(resolved.ResourcePath); err != nil {
+			return err
+		}
+		n.printResourceAge(resolved)
 	case rvfs.TargetProperty:
 		n.showProperty(resolved.Property, 0, false)
 	}
@@ -322,7 +349,7 @@ func (n *Navigator) showResource(path string) error {
 	}
 
 	fmt.Println()
-	fmt.Println(colorBold.Sprint(path))
+	fmt.Println(boldStyle.Render(path))
 	if resource.ODataType != "" {
 		fmt.Printf("Type: %s\n", resource.ODataType)
 	}
@@ -358,9 +385,9 @@ func (n *Navigator) showResource(path string) error {
 		for _, name := range childNames {
 			child := resource.Children[name]
 			if child.Type == rvfs.ChildLink {
-				fmt.Printf("  %s → %s\n", colorBoldBlue.Sprintf("%s/", name), child.Target)
+				fmt.Printf("  %s → %s\n", childStyle.Render(name+"/"), child.Target)
 			} else {
-				fmt.Printf("  %s → %s\n", colorCyan.Sprintf("%s@", name), child.Target)
+				fmt.Printf("  %s → %s\n", linkStyle.Render(name+"@"), child.Target)
 			}
 		}
 	}
@@ -382,24 +409,23 @@ func (n *Navigator) showProperty(prop *rvfs.Property, indent int, isArrayElement
 
 	switch prop.Type {
 	case rvfs.PropertySimple:
-		// Print property name and simple value inline
-		fmt.Printf("%s%s: %s\n", propertyIndent, colorGreen.Sprint(prop.Name), formatSimpleValue(prop.Value))
+		// Print property name and simple value inline with health-semantic coloring
+		fmt.Printf("%s%s: %s\n", propertyIndent, propStyle.Render(prop.Name), formatHealthValue(prop.Name, prop.Value))
 
 	case rvfs.PropertyLink:
 		// Print property name and link target
-		fmt.Printf("%s%s: %s → %s\n", propertyIndent, colorGreen.Sprint(prop.Name), colorCyan.Sprint("link"), prop.LinkTarget)
+		fmt.Printf("%s%s: %s → %s\n", propertyIndent, propStyle.Render(prop.Name), linkStyle.Render("link"), prop.LinkTarget)
 
 	case rvfs.PropertyObject:
-		// Print property name
-		fmt.Printf("%s%s:", propertyIndent, colorGreen.Sprint(prop.Name))
+		// Print property name with field count badge
+		fmt.Printf("%s%s:", propertyIndent, propStyle.Render(prop.Name))
 
 		// Object - show nested fields with indentation (YAML-style)
 		if len(prop.Children) == 0 {
 			// Empty object
-			fmt.Println(" {}")
+			fmt.Printf(" %s\n", dimStyle.Render("{}"))
 		} else {
-			// Print leading newline
-			fmt.Println()
+			fmt.Printf(" %s\n", dimStyle.Render(fmt.Sprintf("{%d}", len(prop.Children))))
 
 			// Sort keys for deterministic output
 			keys := make([]string, 0, len(prop.Children))
@@ -416,15 +442,15 @@ func (n *Navigator) showProperty(prop *rvfs.Property, indent int, isArrayElement
 		}
 
 	case rvfs.PropertyArray:
-		// Print property name
-		fmt.Printf("%s%s:", propertyIndent, colorGreen.Sprint(prop.Name))
+		// Print property name with element count badge
+		fmt.Printf("%s%s:", propertyIndent, propStyle.Render(prop.Name))
 
 		// Array - show elements with YAML-style list markers
 		if len(prop.Elements) == 0 {
 			// Empty array
-			fmt.Println(" []")
+			fmt.Printf(" %s\n", dimStyle.Render("[]"))
 		} else {
-			fmt.Println()
+			fmt.Printf(" %s\n", dimStyle.Render(fmt.Sprintf("[%d]", len(prop.Elements))))
 			// Print each element with dash marker
 			for _, elem := range prop.Elements {
 				// For array elements, we need special handling for objects
@@ -454,11 +480,11 @@ func (n *Navigator) showProperty(prop *rvfs.Property, indent int, isArrayElement
 					fmt.Printf("%s- ", childIndent)
 					switch elem.Type {
 					case rvfs.PropertySimple:
-						fmt.Println(formatSimpleValue(elem.Value))
+						fmt.Println(formatTypedValue(elem.Value))
 					case rvfs.PropertyObject:
-						fmt.Println("{}")
+						fmt.Println(dimStyle.Render("{}"))
 					case rvfs.PropertyLink:
-						fmt.Printf("%s → %s\n", colorCyan.Sprint("link"), elem.LinkTarget)
+						fmt.Printf("%s → %s\n", linkStyle.Render("link"), elem.LinkTarget)
 					}
 				}
 			}
@@ -466,22 +492,77 @@ func (n *Navigator) showProperty(prop *rvfs.Property, indent int, isArrayElement
 	}
 }
 
-// formatSimpleValue formats a simple property value
-func formatSimpleValue(value any) string {
+// formatHealthValue renders health/state values with semantic colors, other values with type colors
+func formatHealthValue(name string, value any) string {
+	if healthKeys[name] {
+		s, ok := value.(string)
+		if ok {
+			upper := strings.ToUpper(s)
+			switch {
+			case upper == "OK" || upper == "ENABLED" || upper == "UP":
+				return healthOKStyle.Render(s)
+			case upper == "WARNING" || upper == "STANDBYOFFLINE" || upper == "STARTING":
+				return healthWarnStyle.Render(s)
+			case upper == "CRITICAL" || upper == "DISABLED" || upper == "ABSENT":
+				return healthCriticalStyle.Render(s)
+			}
+		}
+	}
+	return formatTypedValue(value)
+}
+
+// formatTypedValue formats a value with type-appropriate coloring
+func formatTypedValue(value any) string {
 	switch v := value.(type) {
 	case string:
-		return v
+		return stringValStyle.Render(v)
 	case bool:
-		return fmt.Sprintf("%v", v)
+		if v {
+			return trueValStyle.Render("true")
+		}
+		return falseValStyle.Render("false")
 	case float64:
 		if v == float64(int64(v)) {
-			return fmt.Sprintf("%d", int64(v))
+			return numberValStyle.Render(fmt.Sprintf("%d", int64(v)))
 		}
-		return fmt.Sprintf("%g", v)
+		return numberValStyle.Render(fmt.Sprintf("%g", v))
 	case nil:
-		return "null"
+		return nullValStyle.Render("null")
 	default:
 		return fmt.Sprintf("%v", v)
+	}
+}
+
+// printResourceAge prints the age of a resolved target's resource
+func (n *Navigator) printResourceAge(target *rvfs.Target) {
+	var fetchedAt time.Time
+	switch target.Type {
+	case rvfs.TargetResource, rvfs.TargetLink:
+		if target.Resource != nil {
+			fetchedAt = target.Resource.FetchedAt
+		}
+	case rvfs.TargetProperty:
+		if target.Resource != nil {
+			fetchedAt = target.Resource.FetchedAt
+		}
+	}
+	if fetchedAt.IsZero() {
+		return
+	}
+	fmt.Println(dimStyle.Render(formatAge(fetchedAt)))
+}
+
+func formatAge(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 }
 
@@ -628,7 +709,7 @@ func findInProperty(prop *rvfs.Property, prefix string, re *regexp.Regexp, resul
 	if re.MatchString(prop.Name) {
 		*results = append(*results,
 			fmt.Sprintf("%s = %s",
-				colorYellow.Sprint(fullPath),
+				warnStyle.Render(fullPath),
 				formatPropertyValue(prop)))
 	}
 
@@ -643,6 +724,118 @@ func findInProperty(prop *rvfs.Property, prefix string, re *regexp.Regexp, resul
 			findInProperty(elem, fullPath, re, results)
 		}
 	}
+}
+
+// scrape crawls all reachable resources from the current directory
+func (n *Navigator) scrape() error {
+	start := time.Now()
+
+	// Build set of already cached paths
+	cached := make(map[string]bool)
+	for _, p := range n.vfs.GetKnownPaths() {
+		cached[p] = true
+	}
+
+	// BFS from cwd to discover uncached frontiers
+	visited := make(map[string]bool)
+	frontier := []string{n.cwd}
+	var queue []string
+
+	for len(frontier) > 0 {
+		path := frontier[0]
+		frontier = frontier[1:]
+		if visited[path] {
+			continue
+		}
+		visited[path] = true
+
+		if !cached[path] {
+			queue = append(queue, path)
+			continue // Can't inspect children of uncached resources yet
+		}
+
+		res, err := n.vfs.Get(path)
+		if err != nil {
+			continue
+		}
+		for _, child := range res.Children {
+			if !visited[child.Target] {
+				frontier = append(frontier, child.Target)
+			}
+		}
+	}
+
+	if len(queue) == 0 {
+		fmt.Println("Everything is cached")
+		return nil
+	}
+
+	fetched := 0
+	errors := 0
+	total := len(queue)
+
+	for len(queue) > 0 {
+		path := queue[0]
+		queue = queue[1:]
+		fetched++
+
+		fmt.Printf("Fetching %s... (%d/%d)\n", path, fetched, total)
+
+		res, err := n.vfs.Get(path)
+		if err != nil {
+			fmt.Printf("  %s\n", errorStyle.Render(err.Error()))
+			errors++
+			continue
+		}
+
+		// Discover new children from freshly fetched resource
+		for _, child := range res.Children {
+			if !visited[child.Target] {
+				visited[child.Target] = true
+				queue = append(queue, child.Target)
+				total++
+			}
+		}
+	}
+
+	elapsed := time.Since(start)
+	fmt.Printf("Done: %d fetched, %d errors, %s\n", fetched, errors, elapsed.Round(time.Millisecond))
+	return nil
+}
+
+// refresh invalidates a resource from cache, re-fetches, and shows it
+func (n *Navigator) refresh(target string) error {
+	// Determine which path to refresh
+	var path string
+	if target == "" {
+		path = n.cwd
+	} else {
+		resolved, err := n.vfs.ResolveTarget(n.cwd, target)
+		if err != nil {
+			return err
+		}
+		switch resolved.Type {
+		case rvfs.TargetResource, rvfs.TargetLink:
+			path = resolved.ResourcePath
+		default:
+			return fmt.Errorf("can only refresh resources, not properties")
+		}
+	}
+
+	n.vfs.Invalidate(path)
+	fmt.Printf("Refreshing %s...\n", path)
+
+	res, err := n.vfs.Get(path)
+	if err != nil {
+		return err
+	}
+
+	// Show refreshed resource like ll
+	if err := n.showResource(path); err != nil {
+		return err
+	}
+	fmt.Println(dimStyle.Render(formatAge(res.FetchedAt)))
+	return nil
 }
 
 // ActionInfo describes a Redfish action on a resource
@@ -771,15 +964,15 @@ func (n *Navigator) printShortListingAll(entries []*rvfs.Entry) {
 func formatEntry(entry *rvfs.Entry) string {
 	switch entry.Type {
 	case rvfs.EntryLink:
-		return colorBoldBlue.Sprintf("%s/", entry.Name)
+		return childStyle.Render(entry.Name + "/")
 	case rvfs.EntrySymlink:
-		return colorCyan.Sprintf("%s@", entry.Name)
+		return linkStyle.Render(entry.Name + "@")
 	case rvfs.EntryComplex:
-		return colorPurple.Sprintf("%s/", entry.Name)
+		return objectStyle.Render(entry.Name + "/")
 	case rvfs.EntryArray:
-		return colorPurple.Sprintf("%s[]", entry.Name)
+		return objectStyle.Render(entry.Name + "[]")
 	case rvfs.EntryProperty:
-		return colorGreen.Sprint(entry.Name)
+		return propStyle.Render(entry.Name)
 	default:
 		return entry.Name
 	}
@@ -844,8 +1037,8 @@ func getEntriesSummary(entries []*rvfs.Entry) string {
 func main() {
 	// Parse arguments: config file only
 	if len(os.Args) != 2 {
-		fmt.Println("Usage: rfsh CONFIG_FILE")
-		fmt.Println("Example: rfsh config.yaml")
+		fmt.Println("Usage: bfsh CONFIG_FILE")
+		fmt.Println("Example: bfsh config.yaml")
 		os.Exit(1)
 	}
 
@@ -853,8 +1046,8 @@ func main() {
 
 	// Check if it's a YAML file
 	if !strings.HasSuffix(configPath, ".yaml") && !strings.HasSuffix(configPath, ".yml") {
-		fmt.Println("Usage: rfsh CONFIG_FILE")
-		fmt.Println("Example: rfsh config.yaml")
+		fmt.Println("Usage: bfsh CONFIG_FILE")
+		fmt.Println("Example: bfsh config.yaml")
 		os.Exit(1)
 	}
 
@@ -893,7 +1086,7 @@ func main() {
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:            getPrompt(nav),
-		HistoryFile:       os.ExpandEnv("$HOME/.rfsh_history"),
+		HistoryFile:       os.ExpandEnv("$HOME/.bfsh_history"),
 		AutoComplete:      completer,
 		Listener:          listener,
 		InterruptPrompt:   "^C",
@@ -975,9 +1168,9 @@ func main() {
 
 func getPrompt(nav *Navigator) string {
 	if nav.actionMode {
-		return colorBoldRed.Sprint("action> ")
+		return promptActStyle.Render("action> ")
 	}
-	return fmt.Sprintf("%s> ", colorBoldBlue.Sprint(nav.cwd))
+	return promptPathStyle.Render(nav.cwd) + "> "
 }
 
 func executeCommand(nav *Navigator, cmd string, args []string) error {
@@ -1034,6 +1227,16 @@ func executeCommand(nav *Navigator, cmd string, args []string) error {
 		}
 		return nav.find(args[0])
 
+	case "scrape":
+		return nav.scrape()
+
+	case "refresh":
+		target := ""
+		if len(args) > 0 {
+			target = args[0]
+		}
+		return nav.refresh(target)
+
 	case "cache":
 		if len(args) == 0 {
 			paths := nav.vfs.GetKnownPaths()
@@ -1069,9 +1272,9 @@ func executeCommand(nav *Navigator, cmd string, args []string) error {
 // printActionList displays available actions
 func printActionList(actions []ActionInfo) {
 	fmt.Println()
-	colorBoldRed.Println("Actions")
+	fmt.Println(errorStyle.Render("Actions"))
 	for _, a := range actions {
-		line := fmt.Sprintf("  %s", colorYellow.Sprint(a.ShortName))
+		line := fmt.Sprintf("  %s", warnStyle.Render(a.ShortName))
 		if len(a.Allowable) > 0 {
 			var params []string
 			for param, vals := range a.Allowable {
@@ -1143,7 +1346,7 @@ func executeActionCommand(nav *Navigator, cmd string, args []string) error {
 // showActionDetail shows detailed info for one action
 func showActionDetail(nav *Navigator, action *ActionInfo) {
 	fmt.Println()
-	colorBoldRed.Println(action.Name)
+	fmt.Println(errorStyle.Render(action.Name))
 	fmt.Printf("  Target: %s\n", action.Target)
 
 	if action.InfoURI != "" {
@@ -1185,9 +1388,9 @@ func showActionDetail(nav *Navigator, action *ActionInfo) {
 
 					reqStr := ""
 					if required {
-						reqStr = colorRed.Sprint(" (required)")
+						reqStr = errorStyle.Render(" (required)")
 					}
-					fmt.Printf("    %s%s  %s", colorYellow.Sprint(name), reqStr, dataType)
+					fmt.Printf("    %s%s  %s", warnStyle.Render(name), reqStr, dataType)
 					if len(allowable) > 0 {
 						fmt.Printf("  [%s]", strings.Join(allowable, "|"))
 					}
@@ -1204,7 +1407,7 @@ func showActionDetail(nav *Navigator, action *ActionInfo) {
 			fmt.Println("\n  Allowable values (from annotations):")
 		}
 		for param, vals := range action.Allowable {
-			fmt.Printf("    %s: [%s]\n", colorYellow.Sprint(param), strings.Join(vals, "|"))
+			fmt.Printf("    %s: [%s]\n", warnStyle.Render(param), strings.Join(vals, "|"))
 		}
 	}
 
@@ -1259,7 +1462,7 @@ func invokeAction(nav *Navigator, action *ActionInfo, args []string) error {
 	}
 
 	// Show confirmation
-	fmt.Printf("\n%s %s\n", colorBoldRed.Sprint("POST"), action.Target)
+	fmt.Printf("\n%s %s\n", errorStyle.Render("POST"), action.Target)
 	if len(body) > 0 {
 		fmt.Println(string(jsonBody))
 	}
@@ -1292,47 +1495,50 @@ func invokeAction(nav *Navigator, action *ActionInfo, args []string) error {
 
 // printActionHelp shows action mode help
 func printActionHelp() {
-	bold := color.New(color.Bold).SprintFunc()
-	cmd := colorCyan.SprintFunc()
-	arg := colorYellow.SprintFunc()
+	cmd := func(s string) string { return linkStyle.Render(s) }
+	arg := func(s string) string { return warnStyle.Render(s) }
 
 	fmt.Println()
-	fmt.Println(bold("Action Mode"))
+	fmt.Println(boldStyle.Render("Action Mode"))
 	fmt.Printf("  %s %-16s %s\n", cmd("ls"), "", "List available actions")
 	fmt.Printf("  %s %-16s %s\n", cmd("ll"), arg("<action>"), "Show action details and parameters")
 	fmt.Printf("  %s %-16s %s\n", cmd("<action>"), arg("[k=v ...]"), "Invoke action (with confirmation)")
 	fmt.Printf("  %s %-16s %s\n", cmd("!"), "", "Exit action mode")
 	fmt.Printf("  %s %-16s %s\n", cmd("help"), "", "Show this help")
 	fmt.Println()
-	fmt.Println(bold("Example"))
-	fmt.Printf("  %s\n", colorYellow.Sprint("Reset ResetType=GracefulShutdown"))
+	fmt.Println(boldStyle.Render("Example"))
+	fmt.Printf("  %s\n", warnStyle.Render("Reset ResetType=GracefulShutdown"))
 	fmt.Println()
 }
 
 func printHelp() {
-	bold := color.New(color.Bold).SprintFunc()
-	dim := color.New(color.Faint).SprintFunc()
-	cmd := colorCyan.SprintFunc()
-	arg := colorYellow.SprintFunc()
+	cmd := func(s string) string { return linkStyle.Render(s) }
+	arg := func(s string) string { return warnStyle.Render(s) }
+	dim := func(s string) string { return dimStyle.Render(s) }
 
 	fmt.Println()
-	fmt.Println(bold("Navigation"))
+	fmt.Println(boldStyle.Render("Navigation"))
 	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("cd"), arg("<path>"), "Navigate to resource/property", cmd("open"), arg("<path>"), "Follow link to target resource")
 	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("pwd"), "", "Print working directory", cmd("ls"), arg("[path]"), "List entries")
 	fmt.Printf("  %s %-12s %s\n", cmd("ll"), arg("[path]"), "Show formatted content (YAML-style)")
 
 	fmt.Println()
-	fmt.Println(bold("Viewing & Search"))
+	fmt.Println(boldStyle.Render("Viewing & Search"))
 	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("dump"), arg("[path]"), "Show raw JSON", cmd("tree"), arg("[depth]"), "Tree view (default: 2)")
 	fmt.Printf("  %s %-12s %s\n", cmd("find"), arg("<pattern>"), "Search properties recursively")
 
 	fmt.Println()
-	fmt.Println(bold("Other"))
+	fmt.Println(boldStyle.Render("Fetching"))
+	fmt.Printf("  %s %-12s %s\n", cmd("scrape"), "", "Crawl all reachable resources from cwd")
+	fmt.Printf("  %s %-12s %s\n", cmd("refresh"), arg("[path]"), "Re-fetch a resource (invalidate + fetch)")
+
+	fmt.Println()
+	fmt.Println(boldStyle.Render("Other"))
 	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("!"), "", "Enter action mode (POST)", cmd("cache"), arg("[cmd]"), "Cache ops (clear, list)")
 	fmt.Printf("  %s %-12s %s    %s %s\n", cmd("clear"), "", "Clear screen", cmd("help"), dim("exit/quit"))
 
 	fmt.Println()
-	fmt.Println(bold("Paths"))
+	fmt.Println(boldStyle.Render("Paths"))
 	fmt.Printf("  %s  %s  %s  %s             %s\n",
 		arg("/"), dim("separator"),
 		arg("[n]"), dim("array index"),
@@ -1343,7 +1549,7 @@ func printHelp() {
 		dim("open .  returns to containing resource"))
 
 	fmt.Println()
-	fmt.Println(bold("Keys"))
+	fmt.Println(boldStyle.Render("Keys"))
 	fmt.Printf("  %s  %s    %s  %s\n",
 		dim("Tab"), "complete",
 		dim("Ctrl+R"), "history search")
@@ -1352,14 +1558,14 @@ func printHelp() {
 		dim("Ctrl+L"), "clear screen")
 
 	fmt.Println()
-	fmt.Println(bold("Display"))
+	fmt.Println(boldStyle.Render("Display"))
 	fmt.Printf("  %s  %s  %s  %s  %s\n",
-		colorBoldBlue.Sprint("dir/"), dim("child"),
-		colorCyan.Sprint("link@"), dim("symlink"),
-		colorGreen.Sprint("prop"))
+		childStyle.Render("dir/"), dim("child"),
+		linkStyle.Render("link@"), dim("symlink"),
+		propStyle.Render("prop"))
 	fmt.Printf("  %s  %s  %s  %s\n",
-		colorPurple.Sprint("obj/"), dim("object"),
-		colorPurple.Sprint("arr[]"), dim("array"))
+		objectStyle.Render("obj/"), dim("object"),
+		objectStyle.Render("arr[]"), dim("array"))
 	fmt.Println()
 }
 

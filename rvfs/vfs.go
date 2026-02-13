@@ -55,7 +55,7 @@ func NewVFS(endpoint, username, password string, insecure bool) (VFS, error) {
 	}
 
 	u, _ := url.Parse(endpoint)
-	cacheFile := fmt.Sprintf(".rfsh_cache_%s.json", u.Hostname())
+	cacheFile := fmt.Sprintf(".bfsh_cache_%s.json", u.Hostname())
 
 	parser := NewParser()
 	cache := NewResourceCache(client, parser, cacheFile)

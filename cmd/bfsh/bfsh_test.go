@@ -35,9 +35,9 @@ func TestShowProperty_SimpleValue(t *testing.T) {
 		Value: "OK",
 	}
 
-	output := captureOutput(func() {
+	output := stripAnsi(captureOutput(func() {
 		nav.showProperty(prop, 0, false)
-	})
+	}))
 
 	expected := "Health: OK\n"
 	if output != expected {
@@ -54,9 +54,9 @@ func TestShowProperty_Link(t *testing.T) {
 		LinkTarget: "/redfish/v1/Systems/1",
 	}
 
-	output := captureOutput(func() {
+	output := stripAnsi(captureOutput(func() {
 		nav.showProperty(prop, 0, false)
-	})
+	}))
 
 	if !strings.Contains(output, "link →") {
 		t.Errorf("Expected link indicator, got %q", output)
@@ -75,9 +75,9 @@ func TestShowProperty_EmptyObject(t *testing.T) {
 		Children: map[string]*rvfs.Property{},
 	}
 
-	output := captureOutput(func() {
+	output := stripAnsi(captureOutput(func() {
 		nav.showProperty(prop, 0, false)
-	})
+	}))
 
 	expected := "EmptyObj: {}\n"
 	if output != expected {
@@ -94,9 +94,9 @@ func TestShowProperty_EmptyArray(t *testing.T) {
 		Elements: []*rvfs.Property{},
 	}
 
-	output := captureOutput(func() {
+	output := stripAnsi(captureOutput(func() {
 		nav.showProperty(prop, 0, false)
-	})
+	}))
 
 	expected := "EmptyArr: []\n"
 	if output != expected {
@@ -124,9 +124,9 @@ func TestShowProperty_SimpleObject(t *testing.T) {
 		},
 	}
 
-	output := captureOutput(func() {
+	output := stripAnsi(captureOutput(func() {
 		nav.showProperty(prop, 0, false)
-	})
+	}))
 
 	// Should start with property name
 	if !strings.HasPrefix(output, "Status:") {
@@ -168,9 +168,9 @@ func TestShowProperty_ArrayOfSimpleValues(t *testing.T) {
 		},
 	}
 
-	output := captureOutput(func() {
+	output := stripAnsi(captureOutput(func() {
 		nav.showProperty(prop, 0, false)
-	})
+	}))
 
 	// Should start with property name
 	if !strings.HasPrefix(output, "BootOrder:") {
@@ -218,9 +218,9 @@ func TestShowProperty_ArrayOfObjects(t *testing.T) {
 		},
 	}
 
-	output := captureOutput(func() {
+	output := stripAnsi(captureOutput(func() {
 		nav.showProperty(prop, 0, false)
-	})
+	}))
 
 	// Critical test: First field should be inline with dash
 	// Should NOT have "- \n  CapabilitiesObject:"
@@ -300,9 +300,9 @@ func TestShowProperty_ArrayOfObjects_WithNestedObject(t *testing.T) {
 		},
 	}
 
-	output := captureOutput(func() {
+	output := stripAnsi(captureOutput(func() {
 		nav.showProperty(prop, 0, false)
-	})
+	}))
 
 	// The output should be:
 	//
@@ -383,9 +383,9 @@ func TestShowProperty_NestedArrays(t *testing.T) {
 		},
 	}
 
-	output := captureOutput(func() {
+	output := stripAnsi(captureOutput(func() {
 		nav.showProperty(prop, 0, false)
-	})
+	}))
 
 	// Should have proper indentation for nested array
 	if !strings.Contains(output, "RelatedItem:") {

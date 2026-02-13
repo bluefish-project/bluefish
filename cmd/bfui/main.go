@@ -19,7 +19,7 @@ type Config struct {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("Usage: rfui CONFIG_FILE")
+		fmt.Println("Usage: bfui CONFIG_FILE")
 		os.Exit(1)
 	}
 

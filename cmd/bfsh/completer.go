@@ -39,7 +39,7 @@ func (c *Completer) Do(line []rune, pos int) ([][]rune, int) {
 	}
 
 	switch cmd {
-	case "cd", "ls", "ll", "dump", "open":
+	case "cd", "ls", "ll", "dump", "open", "refresh":
 		return c.completePath(partial)
 	case "tree":
 		return c.completeTreeDepth()
@@ -139,6 +139,7 @@ func (c *Completer) doActionMode(text string, words []string) ([][]rune, int) {
 func (c *Completer) completeCommand(words []string) ([][]rune, int) {
 	commands := []string{
 		"cd", "ls", "ll", "pwd", "dump", "tree", "find", "open",
+		"scrape", "refresh",
 		"cache", "clear", "help", "exit", "quit",
 	}
 

@@ -16,12 +16,12 @@
 *.yml
 
 # Build artifacts
-/rfsh
-/rfui
+/bfsh
+/bfui
 /tview
 
 # Cache files
-.rfsh_cache_*.json
+.bfsh_cache_*.json
 
 # IDE
 .vscode/
