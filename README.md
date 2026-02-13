@@ -5,11 +5,11 @@ A filesystem-style shell for navigating and exploring Redfish APIs. RFSH present
 ## Features
 
 - **Filesystem metaphor**: Navigate Redfish APIs like a local filesystem
-- **Composite paths**: Seamlessly combine resource navigation (`/`) and property access (`:`)
-- **Array indexing**: Access array elements with intuitive `[n]` syntax
-- **Smart caching**: Automatic fetch-on-miss with persistent cache across sessions
+- **Unified `/` paths**: Resources and properties use the same separator
+- **Array indexing**: Access array elements with `[n]` syntax
+- **Smart caching**: Fetch-on-miss with persistent cache across sessions
 - **Tab completion**: Context-aware completion for resources, properties, and array indices
-- **Offline mode**: Browse cached data without network access
+- **TUI**: Tree-based browser with vim-style navigation
 
 ## Quick Start
 
@@ -19,8 +19,8 @@ A filesystem-style shell for navigating and exploring Redfish APIs. RFSH present
 # Build CLI shell
 go build -o rfsh ./cmd/rfsh
 
-# Build TUI (coming soon)
-go build -o rfui ./cmd/rfui
+# Build TUI browser
+go build -o rfui ./cmd/tview
 ```
 
 ### Configuration
@@ -38,160 +38,148 @@ insecure: true  # Skip TLS verification (optional)
 
 ```bash
 ./rfsh config.yaml
+./rfui config.yaml
 ```
 
-## Basic Commands
+## Commands
 
 ### Navigation
 
 ```bash
-# Change to a resource (preserves composite paths)
-cd Systems/1
-
-# Navigate to a property path
-cd Systems/@Redfish.CollectionCapabilities
-
-# Navigate with array indexing
-cd Links:Drives[0]
-
-# Open follows links and canonicalizes paths
-open Links:Drives[0]
-
-# Show current location
-pwd
+cd Systems/1              # Navigate to a child resource
+cd Status                 # Navigate into a property object
+cd ..                     # Go up one level
+cd ~                      # Return to /redfish/v1
+open Links/Chassis[0]     # Follow a PropertyLink to its target resource
+open .                    # Return to containing resource from a property path
+pwd                       # Print working directory
 ```
 
 ### Viewing Data
 
 ```bash
-# List children and properties
-ls
-
-# Show detailed YAML-style output
-ll Status
-ll Status:Health
-ll Members[0]
-
-# Show raw JSON
-dump
-
-# Tree view with depth
-tree 3
+ls                        # List children and properties
+ll Status                 # Show formatted YAML-style output
+ll Status/Health          # Show a nested property value
+dump                      # Show raw JSON of current resource
+dump Status               # Show raw JSON of a property
+tree 3                    # Tree view with depth
 ```
 
-### Other Commands
+### Search
 
 ```bash
-# Search for properties matching pattern
-find Health
+find Health               # Search properties recursively (includes child resources)
+```
 
-# Toggle flat vs hierarchical property view
-flat
+### Other
 
-# Cache management
-cache          # Show stats
-cache list     # List cached paths
-cache clear    # Clear cache
-
-# Clear screen
-clear
-
-# Exit
-exit
+```bash
+cache                     # Show cache stats
+cache list                # List cached resource paths
+cache clear               # Clear cache
+clear                     # Clear screen
+help                      # Show command help
+exit                      # Exit shell
 ```
 
 ## Path Syntax
 
-RFSH uses three separators for navigation:
-
-| Separator | Purpose | Example |
-|-----------|---------|---------|
-| `/` | Navigate resources | `/redfish/v1/Systems/1` |
-| `:` | Navigate properties | `Status:Health` |
-| `[n]` | Index arrays | `Members[0]` |
-
-### Path Examples
+All navigation uses `/` as the separator. Array elements use `[n]`.
 
 ```bash
-# Resource path
+# Resource paths
 /redfish/v1/Systems/1
 
-# Property path (relative)
-Status:Health
-
-# Composite path (resource + property)
-/redfish/v1/Systems/1/Status:Health
+# Property paths (relative to current location)
+Status/Health
 
 # Array indexing
-Members[0]
-Links:Drives[2]
+BootOrder[0]
+Links/Drives[2]
 
-# Complex composition
-Systems/@Redfish.CollectionCapabilities:Capabilities[0]:Links:RelatedItem[0]
+# Deep property navigation
+Boot/BootSourceOverrideTarget
 ```
 
 ### Special Paths
 
-- `.` - Current location
-- `..` - Parent resource
-- `~` - Root (`/redfish/v1`)
+| Path | Meaning |
+|------|---------|
+| `.`  | Current location |
+| `..` | Parent (resource or property) |
+| `~`  | Root (`/redfish/v1`) |
+
+### `cd` vs `open`
+
+- `cd` navigates into resources and property objects/arrays
+- `open` follows PropertyLinks to their target resource
+- `open .` escapes a property path back to its containing resource
 
 ## Tab Completion
 
 Press `Tab` for context-aware completion:
 
 ```bash
-# Complete resource children
-Systems/<Tab>
-
-# Complete property names
-Status:<Tab>
-
-# Complete array indices
-Members[<Tab>
+Systems/<Tab>             # Complete child resources
+Status/<Tab>              # Complete property children
+BootOrder[<Tab>           # Complete array indices
 ```
 
-**Invalid syntax gets no completions:**
-- `ArrayProperty:` → nothing (use `[` for arrays)
-- `ObjectProperty[` → nothing (use `:` for properties)
+## TUI (rfui)
+
+Tree-based browser with split-pane layout.
+
+| Key | Action |
+|-----|--------|
+| `h/l` | Collapse/expand nodes |
+| `j/k` | Navigate up/down |
+| `s` | Subtree (rebase on current node) |
+| `b` / Backspace | Go back |
+| `u` | Go up to parent |
+| `~` | Go to root |
+| `r` | Refresh (clear cache, re-fetch) |
+| `Enter` | Follow links |
+| `J/K` | Scroll details panel |
+| `q` | Quit |
 
 ## Project Structure
 
 ```
 .
 ├── cmd/
-│   ├── rfsh/            # Shell (CLI) implementation
-│   │   ├── rfsh.go      # Main REPL, Navigator, commands
-│   │   ├── completer.go # Tab completion logic
-│   │   └── ...          # Other shell-specific files
-│   └── rfui/            # TUI implementation (coming soon)
-├── rvfs/                # Shared VFS library
-│   ├── rvfs.go          # VFS interface and path resolution
-│   ├── cache.go         # Resource cache with fetch-on-miss
-│   ├── client.go        # HTTP client with session auth
-│   └── parser.go        # JSON to property tree parser
-├── config.yaml          # Configuration (not in git)
-├── DATA_MODEL.md        # Path syntax and resolution design
-├── NAVIGATOR_DESIGN.md  # Shell commands and UI design
-└── RVFS_DESIGN.md       # VFS architecture and API design
+│   ├── rfsh/                # CLI shell
+│   │   ├── rfsh.go          # REPL, Navigator, commands
+│   │   ├── completer.go     # Tab completion
+│   │   └── completion_listener.go  # Tab prefetch
+│   └── tview/               # TUI browser
+│       └── main.go
+├── rvfs/                    # Virtual filesystem library
+│   ├── vfs.go               # VFS interface and path resolution
+│   ├── types.go             # Data structures and error types
+│   ├── cache.go             # Resource cache with fetch-on-miss
+│   ├── client.go            # HTTP client with session auth
+│   ├── parser.go            # JSON to property tree parser
+│   └── vfs_test.go          # Tests
+└── CLAUDE.md                # Development guidelines
 ```
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────┐
-│         Navigator (Shell)           │
-│  Commands • Display • Completion    │
+│      Consumers (rfsh, rfui)         │
+│  Commands / Display / Completion    │
 └──────────────────┬──────────────────┘
                    │
 ┌──────────────────▼──────────────────┐
 │      RVFS (Virtual Filesystem)      │
-│  Path Resolution • Target Types     │
+│  ResolveTarget / ListAll / Get      │
 └──────────────────┬──────────────────┘
                    │
 ┌──────────────────▼──────────────────┐
 │     Cache (Fetch-on-miss)           │
-│  Memory + Disk • Offline Mode       │
+│  Memory + Disk Persistence          │
 └───────┬─────────────────────┬───────┘
         │                     │
 ┌───────▼──────┐      ┌───────▼───────┐
@@ -200,107 +188,20 @@ Members[<Tab>
 └──────────────┘      └───────────────┘
 ```
 
-### Component Responsibilities
-
-| Component | Purpose |
-|-----------|---------|
-| **Navigator** | Shell REPL, command routing, display formatting |
-| **RVFS** | Path resolution, target type determination, unified API |
-| **Cache** | Resource storage, transparent fetching, persistence |
-| **Client** | HTTP operations, session management, TLS configuration |
-| **Parser** | JSON structure analysis, property tree construction |
-
-## Design Documents
-
-For detailed design information:
-
-- **[DATA_MODEL.md](DATA_MODEL.md)** - Path syntax, property types, resolution algorithm
-- **[NAVIGATOR_DESIGN.md](NAVIGATOR_DESIGN.md)** - Shell commands, tab completion, display formatting
-- **[RVFS_DESIGN.md](RVFS_DESIGN.md)** - VFS architecture, caching, API reference
-
 ## Development
 
-### Running Tests
-
 ```bash
-# All tests
+go build ./...
 go test ./...
-
-# Specific package
-go test ./rvfs -v
-
-# With coverage
-go test ./... -cover
+go vet ./...
 ```
-
-### Test Structure
-
-- **rvfs/vfs_test.go** - Path resolution, composite paths, array indexing
-- **completer_test.go** - Tab completion, separator semantics
-- **rfsh_test.go** - Display formatting tests
-
-### Adding Commands
-
-Commands are registered in `rfsh.go`:
-
-1. Add command to registry
-2. Implement handler function
-3. Add to help text
-4. Add tab completion if needed
 
 ## Cache Files
 
 RFSH creates cache files in the current directory:
 
 ```
-.rfsh_cache_<identifier>.json
+.rfsh_cache_<hostname>.json
 ```
 
-Cache files are excluded from git via `.gitignore`.
-
-## Examples
-
-### Exploring Systems
-
-```bash
-/redfish/v1> cd Systems
-/redfish/v1/Systems> ls
-1    2    @Redfish.CollectionCapabilities
-
-/redfish/v1/Systems> cd 1
-/redfish/v1/Systems/1> ll Status
-Status:
-  Health: OK
-  State: Enabled
-
-/redfish/v1/Systems/1> ll Boot:BootOrder[0]
-Pxe
-```
-
-### Following Links
-
-```bash
-/redfish/v1/Systems/1> cd Links:Chassis[0]
-/redfish/v1/Systems/1/Links:Chassis[0]> open .
-/redfish/v1/Chassis/1>
-```
-
-### Composite Path Navigation
-
-```bash
-/redfish/v1/Systems> cd @Redfish.CollectionCapabilities:Capabilities[0]
-/redfish/v1/Systems/@Redfish.CollectionCapabilities:Capabilities[0]> ll Links
-Links:
-  TargetCollection:
-    link → /redfish/v1/Systems
-  RelatedItem:
-    - link → /redfish/v1/CompositionService/ResourceZones/1
-```
-
-## License
-
-*[Add your license information here]*
-
-## Contributing
-
-*[Add contribution guidelines here]*
+Cache files are gitignored.
