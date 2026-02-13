@@ -11,10 +11,10 @@ Three tools for navigating Redfish BMC APIs, built on a shared virtual filesyste
 ## Quick Start
 
 ```bash
-go build -o bfsh ./cmd/bfsh
-go build -o bfui ./cmd/bfui
-go build -o tview ./cmd/tview
+task            # builds bin/bfsh, bin/bfui, bin/tview
 ```
+
+> Requires [Task](https://taskfile.dev). Or build manually: `go build -o bin/bfsh ./cmd/bfsh`
 
 Create `config.yaml`:
 
@@ -26,9 +26,9 @@ insecure: true
 ```
 
 ```bash
-./bfsh config.yaml     # Shell
-./bfui config.yaml     # TUI (Bubble Tea)
-./tview config.yaml    # TUI (tview)
+bin/bfsh config.yaml     # Shell
+bin/bfui config.yaml     # TUI (Bubble Tea)
+bin/tview config.yaml    # TUI (tview)
 ```
 
 ## Architecture
@@ -259,9 +259,13 @@ rvfs/               Virtual filesystem library
 ## Development
 
 ```bash
-go build ./...
-go test ./...
-go vet ./...
+task build          # build all binaries to bin/
+task test           # go test ./...
+task fmt            # gofmt -w .
+task vet            # go vet ./...
+task lint           # fmt + vet
+task check          # fmt + vet + test
+task clean          # remove bin/
 ```
 
 Cache files (`.bfsh_cache_<hostname>.json`) are created in the working directory and gitignored.

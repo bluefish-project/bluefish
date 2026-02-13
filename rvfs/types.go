@@ -10,11 +10,11 @@ type EntryType int
 
 const (
 	EntryResource EntryType = iota // Directory (Redfish resource)
-	EntryProperty                   // File (simple property)
-	EntryComplex                    // Directory (object property - navigable with /)
-	EntryArray                      // Directory (array property - navigable with [n])
-	EntryLink                       // Directory (child resource link)
-	EntrySymlink                    // Symlink (external resource reference)
+	EntryProperty                  // File (simple property)
+	EntryComplex                   // Directory (object property - navigable with /)
+	EntryArray                     // Directory (array property - navigable with [n])
+	EntryLink                      // Directory (child resource link)
+	EntrySymlink                   // Symlink (external resource reference)
 )
 
 // Entry represents any item in the VFS
@@ -63,9 +63,9 @@ type PropertyType int
 
 const (
 	PropertySimple PropertyType = iota // string, number, bool, null
-	PropertyObject                      // JSON object
-	PropertyArray                       // JSON array
-	PropertyLink                        // Navigation reference ({"@odata.id": "..."})
+	PropertyObject                     // JSON object
+	PropertyArray                      // JSON array
+	PropertyLink                       // Navigation reference ({"@odata.id": "..."})
 )
 
 // Property represents a data field in a resource (recursive tree structure)
@@ -94,7 +94,7 @@ type ChildType int
 
 const (
 	ChildLink    ChildType = iota // Child resource (target under parent)
-	ChildSymlink                   // External reference (target outside parent)
+	ChildSymlink                  // External reference (target outside parent)
 )
 
 // Child represents a navigable child resource
@@ -115,16 +115,16 @@ type TargetType int
 
 const (
 	TargetResource TargetType = iota // A Redfish resource (has @odata.id)
-	TargetProperty                    // A non-link property (simple, object, array)
-	TargetLink                        // A PropertyLink (navigable property)
+	TargetProperty                   // A non-link property (simple, object, array)
+	TargetLink                       // A PropertyLink (navigable property)
 )
 
 // Target represents the result of path resolution
 type Target struct {
-	Type         TargetType  // What type of target this is
-	Resource     *Resource   // The resource we're in
-	Property     *Property   // If Property or Link type
-	ResourcePath string      // For navigation (Resources and Links)
+	Type         TargetType // What type of target this is
+	Resource     *Resource  // The resource we're in
+	Property     *Property  // If Property or Link type
+	ResourcePath string     // For navigation (Resources and Links)
 }
 
 // Error types

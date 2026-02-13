@@ -103,10 +103,10 @@ type scrapeTickMsg struct {
 
 // scrapeDoneMsg is sent after one resource is fetched (or fails)
 type scrapeDoneMsg struct {
-	Path         string
-	Resource     *rvfs.Resource
-	Err          error
-	NewChildren  []string // Newly discovered child paths
+	Path        string
+	Resource    *rvfs.Resource
+	Err         error
+	NewChildren []string // Newly discovered child paths
 }
 
 // HandleTick fetches one resource and returns the result

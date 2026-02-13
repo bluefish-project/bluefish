@@ -9,13 +9,13 @@ import (
 
 // SearchModel manages the search overlay
 type SearchModel struct {
-	input    textinput.Model
-	paths    []string // All known paths
-	results  []string // Filtered results
-	cursor   int
-	maxShow  int // Max results to display
-	height   int
-	width    int
+	input   textinput.Model
+	paths   []string // All known paths
+	results []string // Filtered results
+	cursor  int
+	maxShow int // Max results to display
+	height  int
+	width   int
 }
 
 func NewSearchModel() SearchModel {

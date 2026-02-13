@@ -71,11 +71,11 @@ func (m *mockVFSForCompletion) GetKnownPaths() []string {
 func (m *mockVFSForCompletion) Post(path string, body []byte) ([]byte, int, error) {
 	return nil, 0, nil
 }
-func (m *mockVFSForCompletion) Invalidate(path string)    {}
-func (m *mockVFSForCompletion) Clear()                    {}
-func (m *mockVFSForCompletion) Sync() error               { return nil }
-func (m *mockVFSForCompletion) Parent(p string) string    { return "/redfish/v1" }
-func (m *mockVFSForCompletion) Join(b, t string) string   { return "" }
+func (m *mockVFSForCompletion) Invalidate(path string)  {}
+func (m *mockVFSForCompletion) Clear()                  {}
+func (m *mockVFSForCompletion) Sync() error             { return nil }
+func (m *mockVFSForCompletion) Parent(p string) string  { return "/redfish/v1" }
+func (m *mockVFSForCompletion) Join(b, t string) string { return "" }
 
 func createTestResource() *rvfs.Resource {
 	return &rvfs.Resource{

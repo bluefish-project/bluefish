@@ -47,12 +47,12 @@ type treeNode struct {
 
 // TreeModel manages the tree panel
 type TreeModel struct {
-	root     *treeNode
-	visible  []TreeItem
-	cursor   int
-	offset   int // Scroll offset
-	height   int // Visible rows
-	width    int
+	root    *treeNode
+	visible []TreeItem
+	cursor  int
+	offset  int // Scroll offset
+	height  int // Visible rows
+	width   int
 
 	// Node lookup for async load results
 	nodeMap map[string]*treeNode

@@ -357,4 +357,3 @@ func (v *vfs) Clear() {
 func (v *vfs) Sync() error {
 	return v.cache.Save()
 }
-

@@ -235,15 +235,18 @@ func completionSuffix(entry *rvfs.Entry, separator rune) string {
 
 // splitForCompletion splits a partial path into base, separator, and prefix
 // The separator indicates what kind of completion is expected:
-//   '/' → children (resource or property)
-//   '[' → array indices
+//
+//	'/' → children (resource or property)
+//	'[' → array indices
+//
 // Examples:
-//   "Status/Hea" → ("Status", '/', "Hea")
-//   "Boot/" → ("Boot", '/', "")
-//   "Boot/BootOrder[" → ("Boot/BootOrder", '[', "")
-//   "Systems/1" → ("Systems", '/', "1")
-//   "Status" → ("", 0, "Status")
-//   "" → ("", 0, "")
+//
+//	"Status/Hea" → ("Status", '/', "Hea")
+//	"Boot/" → ("Boot", '/', "")
+//	"Boot/BootOrder[" → ("Boot/BootOrder", '[', "")
+//	"Systems/1" → ("Systems", '/', "1")
+//	"Status" → ("", 0, "Status")
+//	"" → ("", 0, "")
 func splitForCompletion(partial string) (base string, separator rune, prefix string) {
 	// Find the last separator (/ or [)
 	lastSlash := strings.LastIndex(partial, "/")

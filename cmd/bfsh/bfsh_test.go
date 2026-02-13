@@ -430,7 +430,7 @@ func (m *mockVFSForActions) ResolveTarget(basePath, targetPath string) (*rvfs.Ta
 	return nil, &rvfs.NotFoundError{Path: path}
 }
 
-func (m *mockVFSForActions) ListAll(path string) ([]*rvfs.Entry, error)         { return nil, nil }
+func (m *mockVFSForActions) ListAll(path string) ([]*rvfs.Entry, error)           { return nil, nil }
 func (m *mockVFSForActions) ListProperties(path string) ([]*rvfs.Property, error) { return nil, nil }
 func (m *mockVFSForActions) Join(b, t string) string                              { return "" }
 func (m *mockVFSForActions) Parent(p string) string                               { return "" }

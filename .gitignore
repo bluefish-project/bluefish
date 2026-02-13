@@ -14,14 +14,16 @@
 # Config files (may contain credentials)
 *.yaml
 *.yml
+!Taskfile.yml
 
 # Build artifacts
-/bfsh
-/bfui
-/tview
+/bin/
 
 # Cache files
 .bfsh_cache_*.json
+
+# Task runner
+.task/
 
 # IDE
 .vscode/

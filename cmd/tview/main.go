@@ -24,20 +24,20 @@ type NodeRef struct {
 }
 
 type App struct {
-	app      *tview.Application
-	vfs      rvfs.VFS
+	app *tview.Application
+	vfs rvfs.VFS
 
-	tree     *tview.TreeView
-	details  *tview.TextView
-	status   *tview.TextView
+	tree    *tview.TreeView
+	details *tview.TextView
+	status  *tview.TextView
 
-	fullRoot *tview.TreeNode   // The original full tree root (never changes)
+	fullRoot  *tview.TreeNode   // The original full tree root (never changes)
 	rootStack []*tview.TreeNode // Stack of previous roots for back navigation
 
-	nodeMap  map[string]*tview.TreeNode // Path -> TreeNode for jumping
+	nodeMap map[string]*tview.TreeNode // Path -> TreeNode for jumping
 
 	// Current state
-	basePath string   // Current tree root path (for display)
+	basePath string // Current tree root path (for display)
 }
 
 func NewApp(vfs rvfs.VFS) *App {
@@ -273,7 +273,7 @@ func (a *App) addResourceChildren(parent *tview.TreeNode, resource *rvfs.Resourc
 			SetSelectable(true).
 			SetReference(&NodeRef{
 				Path:     childPath,
-				Resource: nil, // Lazy load
+				Resource: nil,    // Lazy load
 				Parent:   parent, // Store parent reference
 			})
 

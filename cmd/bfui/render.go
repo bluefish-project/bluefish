@@ -7,10 +7,10 @@ import (
 
 // healthKeys are property names that get semantic coloring
 var healthKeys = map[string]bool{
-	"Health":      true,
+	"Health":       true,
 	"HealthRollup": true,
-	"State":       true,
-	"Status":      true,
+	"State":        true,
+	"Status":       true,
 }
 
 // formatValue renders a Go value with color coding
