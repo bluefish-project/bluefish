@@ -629,7 +629,7 @@ func (m Model) renderOverlay() (string, bool) {
 
 	rendered := overlayStyle.
 		Width(w).
-		Height(h).
+		MaxHeight(h).
 		Render(inner)
 	return rendered, true
 }
