@@ -22,6 +22,10 @@ func (c *Completer) Do(line []rune, pos int) ([][]rune, int) {
 	text := string(line[:pos])
 	words := strings.Fields(text)
 
+	if c.nav.actionMode {
+		return c.doActionMode(text, words)
+	}
+
 	// Command completion
 	if len(words) == 0 || (len(words) == 1 && !strings.HasSuffix(text, " ")) {
 		return c.completeCommand(words)
@@ -44,6 +48,91 @@ func (c *Completer) Do(line []rune, pos int) ([][]rune, int) {
 	}
 
 	return nil, 0
+}
+
+// doActionMode handles tab completion in action mode
+func (c *Completer) doActionMode(text string, words []string) ([][]rune, int) {
+	actions, _ := discoverActions(c.nav)
+
+	// Command position: complete action names + built-in commands
+	if len(words) == 0 || (len(words) == 1 && !strings.HasSuffix(text, " ")) {
+		prefix := ""
+		if len(words) == 1 {
+			prefix = words[0]
+		}
+
+		var matches []string
+		// Built-in commands
+		for _, cmd := range []string{"ls", "ll", "help", "!"} {
+			if strings.HasPrefix(cmd, prefix) {
+				matches = append(matches, cmd)
+			}
+		}
+		// Action short names
+		for _, a := range actions {
+			if strings.HasPrefix(a.ShortName, prefix) {
+				matches = append(matches, a.ShortName)
+			}
+		}
+		sort.Strings(matches)
+		return toRuneSlices(matches, len(prefix)), len(prefix)
+	}
+
+	// ls and ll complete action names as their argument
+	if words[0] == "ls" || words[0] == "ll" {
+		partial := ""
+		if !strings.HasSuffix(text, " ") && len(words) > 1 {
+			partial = words[len(words)-1]
+		}
+		var matches []string
+		for _, a := range actions {
+			if strings.HasPrefix(a.ShortName, partial) {
+				matches = append(matches, a.ShortName)
+			}
+		}
+		sort.Strings(matches)
+		return toRuneSlices(matches, len(partial)), len(partial)
+	}
+
+	// After action name: complete parameter names and values
+	actionName := words[0]
+	action := matchAction(actions, actionName)
+	if action == nil {
+		return nil, 0
+	}
+
+	partial := ""
+	if !strings.HasSuffix(text, " ") && len(words) > 1 {
+		partial = words[len(words)-1]
+	}
+
+	// Check if completing a value (after =)
+	if idx := strings.Index(partial, "="); idx != -1 {
+		paramName := partial[:idx]
+		valuePrefix := partial[idx+1:]
+		if vals, ok := action.Allowable[paramName]; ok {
+			var matches []string
+			for _, v := range vals {
+				if strings.HasPrefix(v, valuePrefix) {
+					matches = append(matches, paramName+"="+v)
+				}
+			}
+			sort.Strings(matches)
+			return toRuneSlices(matches, len(partial)), len(partial)
+		}
+		return nil, 0
+	}
+
+	// Complete parameter names as key=
+	var matches []string
+	for param := range action.Allowable {
+		candidate := param + "="
+		if strings.HasPrefix(candidate, partial) {
+			matches = append(matches, candidate)
+		}
+	}
+	sort.Strings(matches)
+	return toRuneSlices(matches, len(partial)), len(partial)
 }
 
 // completeCommand completes command names

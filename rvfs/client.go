@@ -161,3 +161,60 @@ func (c *Client) Fetch(path string) ([]byte, error) {
 
 	return data, nil
 }
+
+// Post sends a POST request with a JSON body
+func (c *Client) Post(path string, body []byte) ([]byte, int, error) {
+	if path[0] != '/' {
+		path = "/" + path
+	}
+
+	url := c.endpoint + path
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("X-Auth-Token", c.token)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, &NetworkError{Path: path, Err: err}
+	}
+	defer resp.Body.Close()
+
+	// Handle 401 Unauthorized - session may have expired
+	if resp.StatusCode == http.StatusUnauthorized {
+		if err := c.Login(); err != nil {
+			return nil, resp.StatusCode, &HTTPError{Path: path, StatusCode: resp.StatusCode}
+		}
+
+		req, err = http.NewRequest("POST", url, bytes.NewReader(body))
+		if err != nil {
+			return nil, 0, err
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		if c.token != "" {
+			req.Header.Set("X-Auth-Token", c.token)
+		}
+		req.Header.Set("Accept", "application/json")
+
+		resp, err = c.http.Do(req)
+		if err != nil {
+			return nil, 0, &NetworkError{Path: path, Err: err}
+		}
+		defer resp.Body.Close()
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, &NetworkError{Path: path, Err: err}
+	}
+
+	return data, resp.StatusCode, nil
+}

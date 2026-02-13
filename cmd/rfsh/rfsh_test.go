@@ -398,3 +398,176 @@ func TestShowProperty_NestedArrays(t *testing.T) {
 		t.Errorf("Expected 2 array elements with dashes, got %d in %q", dashCount, output)
 	}
 }
+
+// mockVFSForActions provides a VFS for action discovery testing
+type mockVFSForActions struct {
+	resources map[string]*rvfs.Resource
+}
+
+func (m *mockVFSForActions) Get(path string) (*rvfs.Resource, error) {
+	if r, ok := m.resources[path]; ok {
+		return r, nil
+	}
+	return nil, &rvfs.NotFoundError{Path: path}
+}
+
+func (m *mockVFSForActions) Post(path string, body []byte) ([]byte, int, error) {
+	return []byte(`{"status":"ok"}`), 200, nil
+}
+
+func (m *mockVFSForActions) ResolveTarget(basePath, targetPath string) (*rvfs.Target, error) {
+	path := targetPath
+	if !strings.HasPrefix(targetPath, "/") {
+		path = basePath + "/" + targetPath
+	}
+	if r, ok := m.resources[path]; ok {
+		return &rvfs.Target{
+			Type:         rvfs.TargetResource,
+			Resource:     r,
+			ResourcePath: path,
+		}, nil
+	}
+	return nil, &rvfs.NotFoundError{Path: path}
+}
+
+func (m *mockVFSForActions) ListAll(path string) ([]*rvfs.Entry, error)         { return nil, nil }
+func (m *mockVFSForActions) ListProperties(path string) ([]*rvfs.Property, error) { return nil, nil }
+func (m *mockVFSForActions) Join(b, t string) string                              { return "" }
+func (m *mockVFSForActions) Parent(p string) string                               { return "" }
+func (m *mockVFSForActions) GetKnownPaths() []string                              { return nil }
+func (m *mockVFSForActions) Clear()                                               {}
+func (m *mockVFSForActions) Sync() error                                          { return nil }
+
+func TestDiscoverActions(t *testing.T) {
+	// Build a resource with Actions matching the system1 test fixture
+	resource := &rvfs.Resource{
+		Path: "/redfish/v1/Systems/1",
+		Properties: map[string]*rvfs.Property{
+			"Actions": {
+				Name: "Actions",
+				Type: rvfs.PropertyObject,
+				Children: map[string]*rvfs.Property{
+					"#ComputerSystem.Reset": {
+						Name: "#ComputerSystem.Reset",
+						Type: rvfs.PropertyObject,
+						Children: map[string]*rvfs.Property{
+							"target": {
+								Name:       "target",
+								Type:       rvfs.PropertyLink,
+								LinkTarget: "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+							},
+							"@Redfish.ActionInfo": {
+								Name:       "@Redfish.ActionInfo",
+								Type:       rvfs.PropertyLink,
+								LinkTarget: "/redfish/v1/Systems/1/ResetActionInfo",
+							},
+							"ResetType@Redfish.AllowableValues": {
+								Name: "ResetType@Redfish.AllowableValues",
+								Type: rvfs.PropertyArray,
+								Elements: []*rvfs.Property{
+									{Name: "[0]", Type: rvfs.PropertySimple, Value: "On"},
+									{Name: "[1]", Type: rvfs.PropertySimple, Value: "ForceOff"},
+									{Name: "[2]", Type: rvfs.PropertySimple, Value: "GracefulShutdown"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Children: map[string]*rvfs.Child{},
+	}
+
+	vfs := &mockVFSForActions{
+		resources: map[string]*rvfs.Resource{
+			"/redfish/v1/Systems/1": resource,
+		},
+	}
+	nav := &Navigator{vfs: vfs, cwd: "/redfish/v1/Systems/1"}
+
+	actions, err := discoverActions(nav)
+	if err != nil {
+		t.Fatalf("discoverActions failed: %v", err)
+	}
+
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+
+	a := actions[0]
+	if a.Name != "#ComputerSystem.Reset" {
+		t.Errorf("Name = %q, want %q", a.Name, "#ComputerSystem.Reset")
+	}
+	if a.ShortName != "Reset" {
+		t.Errorf("ShortName = %q, want %q", a.ShortName, "Reset")
+	}
+	if a.Target != "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset" {
+		t.Errorf("Target = %q", a.Target)
+	}
+	if a.InfoURI != "/redfish/v1/Systems/1/ResetActionInfo" {
+		t.Errorf("InfoURI = %q", a.InfoURI)
+	}
+
+	vals, ok := a.Allowable["ResetType"]
+	if !ok {
+		t.Fatal("missing AllowableValues for ResetType")
+	}
+	if len(vals) != 3 {
+		t.Errorf("AllowableValues count = %d, want 3", len(vals))
+	}
+
+	// Test matchAction
+	t.Run("match by short name", func(t *testing.T) {
+		m := matchAction(actions, "Reset")
+		if m == nil {
+			t.Fatal("matchAction returned nil for 'Reset'")
+		}
+		if m.ShortName != "Reset" {
+			t.Errorf("matched %q", m.ShortName)
+		}
+	})
+
+	t.Run("match case-insensitive", func(t *testing.T) {
+		m := matchAction(actions, "reset")
+		if m == nil {
+			t.Fatal("matchAction returned nil for 'reset'")
+		}
+	})
+
+	t.Run("match by full name", func(t *testing.T) {
+		m := matchAction(actions, "#ComputerSystem.Reset")
+		if m == nil {
+			t.Fatal("matchAction returned nil for full name")
+		}
+	})
+
+	t.Run("no match", func(t *testing.T) {
+		m := matchAction(actions, "nonexistent")
+		if m != nil {
+			t.Error("matchAction should return nil for nonexistent action")
+		}
+	})
+}
+
+func TestDiscoverActions_NoActions(t *testing.T) {
+	resource := &rvfs.Resource{
+		Path:       "/redfish/v1/Systems/1",
+		Properties: map[string]*rvfs.Property{},
+		Children:   map[string]*rvfs.Child{},
+	}
+
+	vfs := &mockVFSForActions{
+		resources: map[string]*rvfs.Resource{
+			"/redfish/v1/Systems/1": resource,
+		},
+	}
+	nav := &Navigator{vfs: vfs, cwd: "/redfish/v1/Systems/1"}
+
+	actions, err := discoverActions(nav)
+	if err != nil {
+		t.Fatalf("discoverActions failed: %v", err)
+	}
+	if len(actions) != 0 {
+		t.Errorf("expected 0 actions, got %d", len(actions))
+	}
+}

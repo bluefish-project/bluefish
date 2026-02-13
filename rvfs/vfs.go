@@ -14,6 +14,7 @@ const RedfishRoot = "/redfish/v1"
 type VFS interface {
 	// Core operations
 	Get(path string) (*Resource, error)
+	Post(path string, body []byte) ([]byte, int, error)
 	ResolveTarget(basePath, targetPath string) (*Target, error)
 
 	// Directory-like operations
@@ -33,6 +34,7 @@ type VFS interface {
 // cache interface for dependency injection
 type cache interface {
 	Get(path string) (*Resource, error)
+	Post(path string, body []byte) ([]byte, int, error)
 	GetKnownPaths() []string
 	Clear()
 	Save() error
@@ -62,6 +64,11 @@ func NewVFS(endpoint, username, password string, insecure bool) (VFS, error) {
 // Get retrieves a resource by its canonical path
 func (v *vfs) Get(path string) (*Resource, error) {
 	return v.cache.Get(path)
+}
+
+// Post sends a POST request (no caching for writes)
+func (v *vfs) Post(path string, body []byte) ([]byte, int, error) {
+	return v.cache.Post(path, body)
 }
 
 // ResolveTarget resolves a target path from a base path.

@@ -26,6 +26,8 @@ var (
 	colorYellow   = color.New(color.FgYellow)
 	colorBold     = color.New(color.Bold)
 	colorBoldBlue = color.New(color.FgBlue, color.Bold)
+	colorBoldRed  = color.New(color.FgRed, color.Bold)
+	colorRed      = color.New(color.FgRed)
 )
 
 // Config holds connection configuration
@@ -63,8 +65,9 @@ func loadConfig(path string) (*Config, error) {
 
 // Navigator manages shell state
 type Navigator struct {
-	vfs rvfs.VFS
-	cwd string
+	vfs        rvfs.VFS
+	cwd        string
+	actionMode bool
 }
 
 // NewNavigator creates a navigator
@@ -642,6 +645,113 @@ func findInProperty(prop *rvfs.Property, prefix string, re *regexp.Regexp, resul
 	}
 }
 
+// ActionInfo describes a Redfish action on a resource
+type ActionInfo struct {
+	Name      string              // Full name (e.g. #ComputerSystem.Reset)
+	ShortName string              // Stripped name (e.g. Reset)
+	Target    string              // POST URI
+	InfoURI   string              // @Redfish.ActionInfo URI (may be empty)
+	Allowable map[string][]string // Parameter name → AllowableValues
+}
+
+// discoverActions finds all actions on the resource at nav.cwd
+func discoverActions(nav *Navigator) ([]ActionInfo, error) {
+	resolved, err := nav.vfs.ResolveTarget(rvfs.RedfishRoot, nav.cwd)
+	if err != nil {
+		return nil, err
+	}
+
+	var resource *rvfs.Resource
+	switch resolved.Type {
+	case rvfs.TargetResource, rvfs.TargetLink:
+		resource = resolved.Resource
+		if resource == nil {
+			resource, err = nav.vfs.Get(resolved.ResourcePath)
+			if err != nil {
+				return nil, err
+			}
+		}
+	case rvfs.TargetProperty:
+		resource = resolved.Resource
+	}
+	if resource == nil {
+		return nil, nil
+	}
+
+	actionsProp, ok := resource.Properties["Actions"]
+	if !ok || actionsProp.Type != rvfs.PropertyObject {
+		return nil, nil
+	}
+
+	var actions []ActionInfo
+	for key, child := range actionsProp.Children {
+		if key == "Oem" {
+			continue
+		}
+
+		info := ActionInfo{
+			Name:      key,
+			Allowable: make(map[string][]string),
+		}
+
+		// Extract short name: strip #Type. prefix
+		if idx := strings.LastIndex(key, "."); idx != -1 && strings.HasPrefix(key, "#") {
+			info.ShortName = key[idx+1:]
+		} else {
+			info.ShortName = key
+		}
+
+		if child.Type != rvfs.PropertyObject {
+			continue
+		}
+
+		// Extract target, ActionInfo URI, and AllowableValues from children
+		for childKey, childProp := range child.Children {
+			if childKey == "target" && childProp.Type == rvfs.PropertyLink {
+				info.Target = childProp.LinkTarget
+			} else if childKey == "@Redfish.ActionInfo" && childProp.Type == rvfs.PropertyLink {
+				info.InfoURI = childProp.LinkTarget
+			} else if strings.HasSuffix(childKey, "@Redfish.AllowableValues") && childProp.Type == rvfs.PropertyArray {
+				paramName := strings.TrimSuffix(childKey, "@Redfish.AllowableValues")
+				var values []string
+				for _, elem := range childProp.Elements {
+					if elem.Type == rvfs.PropertySimple {
+						if s, ok := elem.Value.(string); ok {
+							values = append(values, s)
+						}
+					}
+				}
+				info.Allowable[paramName] = values
+			}
+		}
+
+		if info.Target != "" {
+			actions = append(actions, info)
+		}
+	}
+
+	sort.Slice(actions, func(i, j int) bool {
+		return actions[i].ShortName < actions[j].ShortName
+	})
+	return actions, nil
+}
+
+// matchAction finds an action by short name or full name (case-insensitive)
+func matchAction(actions []ActionInfo, name string) *ActionInfo {
+	lower := strings.ToLower(name)
+	for i := range actions {
+		if strings.ToLower(actions[i].ShortName) == lower {
+			return &actions[i]
+		}
+	}
+	for i := range actions {
+		if strings.ToLower(actions[i].Name) == lower {
+			return &actions[i]
+		}
+	}
+	return nil
+}
+
 // Display formatting
 
 func (n *Navigator) printShortListingAll(entries []*rvfs.Entry) {
@@ -803,6 +913,11 @@ func main() {
 
 		line, err := rl.Readline()
 		if err != nil {
+			if err == readline.ErrInterrupt && nav.actionMode {
+				nav.actionMode = false
+				fmt.Println("Exited action mode")
+				continue
+			}
 			break
 		}
 
@@ -811,10 +926,41 @@ func main() {
 			continue
 		}
 
+		// Enter action mode
+		if line == "!" && !nav.actionMode {
+			actions, err := discoverActions(nav)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				continue
+			}
+			if len(actions) == 0 {
+				fmt.Println("No actions on current resource")
+				continue
+			}
+			nav.actionMode = true
+			printActionList(actions)
+			continue
+		}
+
 		// Parse command
 		parts := strings.Fields(line)
 		cmd := parts[0]
 		args := parts[1:]
+
+		if nav.actionMode {
+			if cmd == "!" {
+				nav.actionMode = false
+				fmt.Println("Exited action mode")
+				continue
+			}
+			if cmd == "exit" || cmd == "quit" || cmd == "q" {
+				break
+			}
+			if err := executeActionCommand(nav, cmd, args); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+			continue
+		}
 
 		// Execute command
 		if err := executeCommand(nav, cmd, args); err != nil {
@@ -828,6 +974,9 @@ func main() {
 }
 
 func getPrompt(nav *Navigator) string {
+	if nav.actionMode {
+		return colorBoldRed.Sprint("action> ")
+	}
 	return fmt.Sprintf("%s> ", colorBoldBlue.Sprint(nav.cwd))
 }
 
@@ -917,6 +1066,249 @@ func executeCommand(nav *Navigator, cmd string, args []string) error {
 	return nil
 }
 
+// printActionList displays available actions
+func printActionList(actions []ActionInfo) {
+	fmt.Println()
+	colorBoldRed.Println("Actions")
+	for _, a := range actions {
+		line := fmt.Sprintf("  %s", colorYellow.Sprint(a.ShortName))
+		if len(a.Allowable) > 0 {
+			var params []string
+			for param, vals := range a.Allowable {
+				params = append(params, fmt.Sprintf("%s=[%s]", param, strings.Join(vals, "|")))
+			}
+			sort.Strings(params)
+			line += fmt.Sprintf("  %s", strings.Join(params, " "))
+		}
+		fmt.Println(line)
+	}
+	fmt.Println()
+}
+
+// executeActionCommand handles commands in action mode
+func executeActionCommand(nav *Navigator, cmd string, args []string) error {
+	switch cmd {
+	case "ls":
+		actions, err := discoverActions(nav)
+		if err != nil {
+			return err
+		}
+		if len(args) > 0 {
+			action := matchAction(actions, args[0])
+			if action == nil {
+				return fmt.Errorf("unknown action: %s", args[0])
+			}
+			printActionList([]ActionInfo{*action})
+		} else {
+			printActionList(actions)
+		}
+		return nil
+
+	case "ll":
+		actions, err := discoverActions(nav)
+		if err != nil {
+			return err
+		}
+		if len(args) > 0 {
+			action := matchAction(actions, args[0])
+			if action == nil {
+				return fmt.Errorf("unknown action: %s", args[0])
+			}
+			showActionDetail(nav, action)
+		} else {
+			for i := range actions {
+				showActionDetail(nav, &actions[i])
+			}
+		}
+		return nil
+
+	case "help", "?":
+		printActionHelp()
+		return nil
+
+	default:
+		// Try to match as action invocation
+		actions, err := discoverActions(nav)
+		if err != nil {
+			return err
+		}
+		action := matchAction(actions, cmd)
+		if action == nil {
+			return fmt.Errorf("unknown action: %s (type 'help' for commands)", cmd)
+		}
+		return invokeAction(nav, action, args)
+	}
+}
+
+// showActionDetail shows detailed info for one action
+func showActionDetail(nav *Navigator, action *ActionInfo) {
+	fmt.Println()
+	colorBoldRed.Println(action.Name)
+	fmt.Printf("  Target: %s\n", action.Target)
+
+	if action.InfoURI != "" {
+		fmt.Printf("  ActionInfo: %s\n", action.InfoURI)
+
+		// Try to fetch and display the ActionInfo resource
+		resource, err := nav.vfs.Get(action.InfoURI)
+		if err == nil {
+			paramsProp, ok := resource.Properties["Parameters"]
+			if ok && paramsProp.Type == rvfs.PropertyArray {
+				fmt.Println("\n  Parameters:")
+				for _, elem := range paramsProp.Elements {
+					if elem.Type != rvfs.PropertyObject {
+						continue
+					}
+					name := ""
+					dataType := ""
+					required := false
+					var allowable []string
+
+					if n, ok := elem.Children["Name"]; ok && n.Type == rvfs.PropertySimple {
+						name = fmt.Sprintf("%v", n.Value)
+					}
+					if dt, ok := elem.Children["DataType"]; ok && dt.Type == rvfs.PropertySimple {
+						dataType = fmt.Sprintf("%v", dt.Value)
+					}
+					if r, ok := elem.Children["Required"]; ok && r.Type == rvfs.PropertySimple {
+						if b, ok := r.Value.(bool); ok {
+							required = b
+						}
+					}
+					if av, ok := elem.Children["AllowableValues"]; ok && av.Type == rvfs.PropertyArray {
+						for _, v := range av.Elements {
+							if v.Type == rvfs.PropertySimple {
+								allowable = append(allowable, fmt.Sprintf("%v", v.Value))
+							}
+						}
+					}
+
+					reqStr := ""
+					if required {
+						reqStr = colorRed.Sprint(" (required)")
+					}
+					fmt.Printf("    %s%s  %s", colorYellow.Sprint(name), reqStr, dataType)
+					if len(allowable) > 0 {
+						fmt.Printf("  [%s]", strings.Join(allowable, "|"))
+					}
+					fmt.Println()
+				}
+			}
+		}
+	}
+
+	if len(action.Allowable) > 0 {
+		if action.InfoURI == "" {
+			fmt.Println("\n  Parameters:")
+		} else {
+			fmt.Println("\n  Allowable values (from annotations):")
+		}
+		for param, vals := range action.Allowable {
+			fmt.Printf("    %s: [%s]\n", colorYellow.Sprint(param), strings.Join(vals, "|"))
+		}
+	}
+
+	fmt.Println()
+}
+
+// invokeAction executes a Redfish action with confirmation
+func invokeAction(nav *Navigator, action *ActionInfo, args []string) error {
+	// Parse key=value arguments
+	body := make(map[string]any)
+	for _, arg := range args {
+		idx := strings.Index(arg, "=")
+		if idx == -1 {
+			return fmt.Errorf("invalid argument %q (expected key=value)", arg)
+		}
+		key := arg[:idx]
+		val := arg[idx+1:]
+
+		// Validate against AllowableValues if present
+		if allowed, ok := action.Allowable[key]; ok {
+			found := false
+			for _, a := range allowed {
+				if a == val {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("invalid value %q for %s (allowed: %s)", val, key, strings.Join(allowed, ", "))
+			}
+		}
+
+		// Attempt numeric conversion
+		if n, err := strconv.ParseFloat(val, 64); err == nil {
+			if n == float64(int64(n)) {
+				body[key] = int64(n)
+			} else {
+				body[key] = n
+			}
+		} else if val == "true" {
+			body[key] = true
+		} else if val == "false" {
+			body[key] = false
+		} else {
+			body[key] = val
+		}
+	}
+
+	jsonBody, err := json.MarshalIndent(body, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	// Show confirmation
+	fmt.Printf("\n%s %s\n", colorBoldRed.Sprint("POST"), action.Target)
+	if len(body) > 0 {
+		fmt.Println(string(jsonBody))
+	}
+	fmt.Print("\nConfirm? [y/N] ")
+
+	var confirm string
+	fmt.Scanln(&confirm)
+	if confirm != "y" && confirm != "Y" {
+		fmt.Println("Cancelled")
+		return nil
+	}
+
+	// Execute
+	data, status, err := nav.vfs.Post(action.Target, jsonBody)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nHTTP %d\n", status)
+	if len(data) > 0 {
+		var buf bytes.Buffer
+		if json.Indent(&buf, data, "", "  ") == nil {
+			fmt.Println(buf.String())
+		} else {
+			fmt.Println(string(data))
+		}
+	}
+	return nil
+}
+
+// printActionHelp shows action mode help
+func printActionHelp() {
+	bold := color.New(color.Bold).SprintFunc()
+	cmd := colorCyan.SprintFunc()
+	arg := colorYellow.SprintFunc()
+
+	fmt.Println()
+	fmt.Println(bold("Action Mode"))
+	fmt.Printf("  %s %-16s %s\n", cmd("ls"), "", "List available actions")
+	fmt.Printf("  %s %-16s %s\n", cmd("ll"), arg("<action>"), "Show action details and parameters")
+	fmt.Printf("  %s %-16s %s\n", cmd("<action>"), arg("[k=v ...]"), "Invoke action (with confirmation)")
+	fmt.Printf("  %s %-16s %s\n", cmd("!"), "", "Exit action mode")
+	fmt.Printf("  %s %-16s %s\n", cmd("help"), "", "Show this help")
+	fmt.Println()
+	fmt.Println(bold("Example"))
+	fmt.Printf("  %s\n", colorYellow.Sprint("Reset ResetType=GracefulShutdown"))
+	fmt.Println()
+}
+
 func printHelp() {
 	bold := color.New(color.Bold).SprintFunc()
 	dim := color.New(color.Faint).SprintFunc()
@@ -936,8 +1328,8 @@ func printHelp() {
 
 	fmt.Println()
 	fmt.Println(bold("Other"))
-	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("cache"), arg("[cmd]"), "Cache ops (clear, list)", cmd("clear"), "", "Clear screen")
-	fmt.Printf("  %s %s\n", cmd("help"), dim("exit/quit"))
+	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("!"), "", "Enter action mode (POST)", cmd("cache"), arg("[cmd]"), "Cache ops (clear, list)")
+	fmt.Printf("  %s %-12s %s    %s %s\n", cmd("clear"), "", "Clear screen", cmd("help"), dim("exit/quit"))
 
 	fmt.Println()
 	fmt.Println(bold("Paths"))

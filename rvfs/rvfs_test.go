@@ -1,6 +1,11 @@
 package rvfs
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -66,6 +71,59 @@ var system1 = []byte(`{
 	"FirmwareInventoryUri": "/redfish/v1/UpdateService/FirmwareInventory/BMC",
 	"ImageURI": "https://example.com/bios.img"
 }`)
+
+// TestClient_Post tests the POST method
+func TestClient_Post(t *testing.T) {
+	var receivedBody []byte
+	var receivedToken string
+	var receivedContentType string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redfish/v1/SessionService/Sessions" && r.Method == "POST" {
+			w.Header().Set("X-Auth-Token", "test-token-123")
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{}`))
+			return
+		}
+		if r.Method == "POST" {
+			receivedBody, _ = io.ReadAll(r.Body)
+			receivedToken = r.Header.Get("X-Auth-Token")
+			receivedContentType = r.Header.Get("Content-Type")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status": "done"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "admin", "pass", true)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"ResetType": "ForceOff"})
+	data, status, err := client.Post("/redfish/v1/Systems/1/Actions/ComputerSystem.Reset", body)
+	if err != nil {
+		t.Fatalf("Post failed: %v", err)
+	}
+
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want %d", status, http.StatusOK)
+	}
+	if receivedToken != "test-token-123" {
+		t.Errorf("token = %q, want %q", receivedToken, "test-token-123")
+	}
+	if receivedContentType != "application/json" {
+		t.Errorf("content-type = %q, want %q", receivedContentType, "application/json")
+	}
+	if string(receivedBody) != string(body) {
+		t.Errorf("body = %q, want %q", string(receivedBody), string(body))
+	}
+	if len(data) == 0 {
+		t.Error("expected response body, got empty")
+	}
+}
 
 // TestParser_Basic tests basic parsing functionality
 func TestParser_Basic(t *testing.T) {
@@ -341,6 +399,10 @@ func (m *mockCache) GetKnownPaths() []string {
 
 func (m *mockCache) Clear() {
 	m.resources = make(map[string]*Resource)
+}
+
+func (m *mockCache) Post(path string, body []byte) ([]byte, int, error) {
+	return nil, 0, fmt.Errorf("post not supported in mock")
 }
 
 func (m *mockCache) Save() error {

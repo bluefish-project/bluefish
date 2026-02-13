@@ -94,6 +94,14 @@ func (c *ResourceCache) Get(path string) (*Resource, error) {
 	return resource, nil
 }
 
+// Post delegates a POST request to the client (no caching for writes)
+func (c *ResourceCache) Post(path string, body []byte) ([]byte, int, error) {
+	if c.offline {
+		return nil, 0, &NotCachedError{Path: path}
+	}
+	return c.client.Post(path, body)
+}
+
 // Put stores a resource in cache
 func (c *ResourceCache) Put(resource *Resource) {
 	c.mu.Lock()
