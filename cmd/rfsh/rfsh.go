@@ -918,61 +918,57 @@ func executeCommand(nav *Navigator, cmd string, args []string) error {
 }
 
 func printHelp() {
-	fmt.Print(`
-rfsh - Redfish Shell Commands:
+	bold := color.New(color.Bold).SprintFunc()
+	dim := color.New(color.Faint).SprintFunc()
+	cmd := colorCyan.SprintFunc()
+	arg := colorYellow.SprintFunc()
 
-Navigation:
-  cd <path>       Navigate to resource or property
-  open <path>     Follow links to canonical resource destination
-  pwd             Print working directory
-  ls [path]       List entries (short form)
-  ll [path]       Show formatted content (long form, YAML-style)
+	fmt.Println()
+	fmt.Println(bold("Navigation"))
+	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("cd"), arg("<path>"), "Navigate to resource/property", cmd("open"), arg("<path>"), "Follow link to target resource")
+	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("pwd"), "", "Print working directory", cmd("ls"), arg("[path]"), "List entries")
+	fmt.Printf("  %s %-12s %s\n", cmd("ll"), arg("[path]"), "Show formatted content (YAML-style)")
 
-Viewing:
-  dump [path]     Show raw JSON
-  tree [depth]    Show tree view (default: 2)
-  find <pattern>  Search properties recursively (includes children)
+	fmt.Println()
+	fmt.Println(bold("Viewing & Search"))
+	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("dump"), arg("[path]"), "Show raw JSON", cmd("tree"), arg("[depth]"), "Tree view (default: 2)")
+	fmt.Printf("  %s %-12s %s\n", cmd("find"), arg("<pattern>"), "Search properties recursively")
 
-Settings:
-  clear           Clear screen
-  cache [cmd]     Manage cache (clear, list)
+	fmt.Println()
+	fmt.Println(bold("Other"))
+	fmt.Printf("  %s %-12s %s    %s %-12s %s\n", cmd("cache"), arg("[cmd]"), "Cache ops (clear, list)", cmd("clear"), "", "Clear screen")
+	fmt.Printf("  %s %s\n", cmd("help"), dim("exit/quit"))
 
-Control:
-  help            Show help
-  exit/quit       Exit shell
+	fmt.Println()
+	fmt.Println(bold("Paths"))
+	fmt.Printf("  %s  %s  %s  %s             %s\n",
+		arg("/"), dim("separator"),
+		arg("[n]"), dim("array index"),
+		dim("Systems/1/Status/Health  BootOrder[0]"))
+	fmt.Printf("  %s %s  %s  %s             %s\n",
+		arg(".."), dim("parent"),
+		arg("~"), dim("root (/redfish/v1)"),
+		dim("open .  returns to containing resource"))
 
-Path Notation:
-  /               Path separator (Systems/1/Status/Health)
-  [n]             Array index (BootOrder[2])
-  ..              Parent directory
-  ~               Root (/redfish/v1)
+	fmt.Println()
+	fmt.Println(bold("Keys"))
+	fmt.Printf("  %s  %s    %s  %s\n",
+		dim("Tab"), "complete",
+		dim("Ctrl+R"), "history search")
+	fmt.Printf("  %s  %s    %s  %s\n",
+		dim("↑/↓"), "history",
+		dim("Ctrl+L"), "clear screen")
 
-Examples:
-  ls              List everything in current resource
-  ll Status       Show Status formatted (YAML-style)
-  ll Status/Health              Show a nested property value
-  dump Status                   Show Status as raw JSON
-  cd Systems/1                  Navigate to Systems/1
-  cd Status                     Navigate into a property object
-  cd ..                         Go up one level
-  open Links/Chassis[0]         Follow PropertyLink to chassis resource
-  open .                        Return to containing resource from a property
-  find Health                   Search recursively for matching properties
-
-Keyboard Shortcuts:
-  Tab             Auto-complete (smart path resolution)
-  Tab Tab         Show all completions
-  Ctrl+R          Reverse history search
-  Ctrl+L          Clear screen
-  Ctrl+A/E        Start/End of line
-  ↑/↓             History (folded)
-
-Display Symbols:
-  blue/           Child resource (navigable)
-  cyan@           External link (symlink)
-  green           Simple property
-  purple*         Complex property (object/array)
-`)
+	fmt.Println()
+	fmt.Println(bold("Display"))
+	fmt.Printf("  %s  %s  %s  %s  %s\n",
+		colorBoldBlue.Sprint("dir/"), dim("child"),
+		colorCyan.Sprint("link@"), dim("symlink"),
+		colorGreen.Sprint("prop"))
+	fmt.Printf("  %s  %s  %s  %s\n",
+		colorPurple.Sprint("obj/"), dim("object"),
+		colorPurple.Sprint("arr[]"), dim("array"))
+	fmt.Println()
 }
 
 // formatColumns formats items in columns like ls

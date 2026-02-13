@@ -45,7 +45,26 @@ var system1 = []byte(`{
 		"Chassis": [
 			{"@odata.id": "/redfish/v1/Chassis/1"}
 		]
-	}
+	},
+	"Actions": {
+		"#ComputerSystem.Reset": {
+			"target": "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+			"@Redfish.ActionInfo": "/redfish/v1/Systems/1/ResetActionInfo",
+			"ResetType@Redfish.AllowableValues": ["On", "ForceOff", "GracefulShutdown"]
+		}
+	},
+	"BiosVersion": "2.1.0",
+	"GraphicalConsole": {
+		"ConnectTypesSupported": ["KVMIP"],
+		"MaxConcurrentSessions": 4,
+		"ServiceEnabled": true
+	},
+	"Assembly": {
+		"@odata.id": "/redfish/v1/Systems/1/Assembly"
+	},
+	"LocationIndicatorActive": false,
+	"FirmwareInventoryUri": "/redfish/v1/UpdateService/FirmwareInventory/BMC",
+	"ImageURI": "https://example.com/bios.img"
 }`)
 
 // TestParser_Basic tests basic parsing functionality
@@ -169,6 +188,116 @@ func TestParser_Basic(t *testing.T) {
 		}
 		if chassis0.LinkTarget != "/redfish/v1/Chassis/1" {
 			t.Errorf("Chassis[0] target = %q, want %q", chassis0.LinkTarget, "/redfish/v1/Chassis/1")
+		}
+	})
+}
+
+// TestParser_URIStringDetection tests that URI string properties are detected as PropertyLinks
+func TestParser_URIStringDetection(t *testing.T) {
+	parser := NewParser()
+	resource, err := parser.Parse("/redfish/v1/Systems/1", system1)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	t.Run("FirmwareInventoryUri is PropertyLink", func(t *testing.T) {
+		prop := resource.Properties["FirmwareInventoryUri"]
+		if prop == nil {
+			t.Fatal("Missing FirmwareInventoryUri property")
+		}
+		if prop.Type != PropertyLink {
+			t.Errorf("Type = %v, want PropertyLink", prop.Type)
+		}
+		if prop.LinkTarget != "/redfish/v1/UpdateService/FirmwareInventory/BMC" {
+			t.Errorf("LinkTarget = %q, want %q", prop.LinkTarget, "/redfish/v1/UpdateService/FirmwareInventory/BMC")
+		}
+	})
+
+	t.Run("ImageURI with external URL stays PropertySimple", func(t *testing.T) {
+		prop := resource.Properties["ImageURI"]
+		if prop == nil {
+			t.Fatal("Missing ImageURI property")
+		}
+		// External URLs (https://) are not Redfish paths, should remain simple
+		if prop.Type != PropertySimple {
+			t.Errorf("Type = %v, want PropertySimple (external URL)", prop.Type)
+		}
+	})
+
+	t.Run("Actions target is PropertyLink", func(t *testing.T) {
+		actions := resource.Properties["Actions"]
+		if actions == nil {
+			t.Fatal("Missing Actions property")
+		}
+		reset := actions.Children["#ComputerSystem.Reset"]
+		if reset == nil {
+			t.Fatal("Missing #ComputerSystem.Reset action")
+		}
+
+		target := reset.Children["target"]
+		if target == nil {
+			t.Fatal("Missing target property in action")
+		}
+		if target.Type != PropertyLink {
+			t.Errorf("target Type = %v, want PropertyLink", target.Type)
+		}
+		if target.LinkTarget != "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset" {
+			t.Errorf("target LinkTarget = %q", target.LinkTarget)
+		}
+	})
+
+	t.Run("@Redfish.ActionInfo is PropertyLink", func(t *testing.T) {
+		actions := resource.Properties["Actions"]
+		reset := actions.Children["#ComputerSystem.Reset"]
+
+		actionInfo := reset.Children["@Redfish.ActionInfo"]
+		if actionInfo == nil {
+			t.Fatal("Missing @Redfish.ActionInfo property")
+		}
+		if actionInfo.Type != PropertyLink {
+			t.Errorf("@Redfish.ActionInfo Type = %v, want PropertyLink", actionInfo.Type)
+		}
+		if actionInfo.LinkTarget != "/redfish/v1/Systems/1/ResetActionInfo" {
+			t.Errorf("@Redfish.ActionInfo LinkTarget = %q", actionInfo.LinkTarget)
+		}
+	})
+
+	t.Run("regular strings stay PropertySimple", func(t *testing.T) {
+		prop := resource.Properties["BiosVersion"]
+		if prop == nil {
+			t.Fatal("Missing BiosVersion property")
+		}
+		if prop.Type != PropertySimple {
+			t.Errorf("BiosVersion Type = %v, want PropertySimple", prop.Type)
+		}
+		if prop.Value != "2.1.0" {
+			t.Errorf("BiosVersion Value = %v, want 2.1.0", prop.Value)
+		}
+	})
+
+	t.Run("AllowableValues annotation stays PropertyArray", func(t *testing.T) {
+		actions := resource.Properties["Actions"]
+		reset := actions.Children["#ComputerSystem.Reset"]
+
+		allowable := reset.Children["ResetType@Redfish.AllowableValues"]
+		if allowable == nil {
+			t.Fatal("Missing ResetType@Redfish.AllowableValues")
+		}
+		if allowable.Type != PropertyArray {
+			t.Errorf("AllowableValues Type = %v, want PropertyArray", allowable.Type)
+		}
+		if len(allowable.Elements) != 3 {
+			t.Errorf("AllowableValues elements = %d, want 3", len(allowable.Elements))
+		}
+	})
+
+	t.Run("Assembly is still a Child (link-only object)", func(t *testing.T) {
+		// Assembly is {"@odata.id": "..."} — should be a Child, not a Property
+		if _, ok := resource.Children["Assembly"]; !ok {
+			t.Error("Assembly should be a Child (link-only object), not a Property")
+		}
+		if _, ok := resource.Properties["Assembly"]; ok {
+			t.Error("Assembly should NOT be in Properties")
 		}
 	})
 }

@@ -123,13 +123,46 @@ func (p *Parser) parseProperty(name string, value []byte, dataType jsonparser.Va
 			idx++
 		})
 
+	case jsonparser.String:
+		// Check if this string property is a URI reference by name convention
+		if p.isURIProperty(name) {
+			linkTarget, _ := jsonparser.ParseString(value)
+			if strings.HasPrefix(linkTarget, "/") {
+				prop.Type = PropertyLink
+				prop.LinkTarget = linkTarget
+				return prop
+			}
+		}
+		// Regular string
+		prop.Type = PropertySimple
+		prop.Value = p.parseValue(value, dataType)
+
 	default:
-		// Simple value (string, number, bool, null)
+		// Number, bool, null
 		prop.Type = PropertySimple
 		prop.Value = p.parseValue(value, dataType)
 	}
 
 	return prop
+}
+
+// isURIProperty checks if a property name indicates a URI reference per DMTF spec.
+// These string properties contain Redfish paths and should be treated as PropertyLinks.
+func (p *Parser) isURIProperty(name string) bool {
+	// DMTF spec: "Non-resource reference properties shall include the Uri or URI
+	// term in their property name and shall be of type string."
+	if strings.HasSuffix(name, "Uri") || strings.HasSuffix(name, "URI") {
+		return true
+	}
+	// @Redfish.ActionInfo is always a URI string pointing to action info resource
+	if name == "@Redfish.ActionInfo" {
+		return true
+	}
+	// "target" in Actions context (action endpoint URI)
+	if name == "target" {
+		return true
+	}
+	return false
 }
 
 // isLinkOnly checks if JSON object contains ONLY OData metadata (no actual data)

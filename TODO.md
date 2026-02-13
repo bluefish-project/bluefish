@@ -1,96 +1,67 @@
 # TODO
 
-## Parser: URI String Properties Should Be PropertyLinks
+## Actions: Invoke Redfish Actions from Shell
 
-### Problem
+### Background
 
-Currently, string properties containing URIs are parsed as `PropertySimple` instead of `PropertyLink`, making them non-navigable:
+Redfish Actions are POST operations on resources. They appear in the `Actions` property:
 
-```bash
-# Current behavior (broken):
-ll @Redfish.ActionInfo
-# Shows: "/redfish/v1/Systems/1/ResetActionInfo" (just a string)
-# Cannot: cd, open, or ll into it
-
-# Expected behavior:
-ll @Redfish.ActionInfo
-# Shows: link → /redfish/v1/Systems/1/ResetActionInfo
-# Can: open @Redfish.ActionInfo (navigates to target)
-```
-
-### Root Cause
-
-Parser only detects PropertyLink for objects with `@odata.id`. String URIs are treated as simple values.
-
-Affected properties:
-- `@Redfish.ActionInfo` - always a URI string
-- `*Uri` / `*URI` suffix properties - per DMTF spec convention
-- `Target` in Actions - action endpoint URI
-
-### DMTF Specification
-
-From Redfish spec (DSP0266):
-> "Non-resource reference properties provide a URI to services or documents that are not Redfish-defined resources, and these properties **shall include the Uri or URI term in their property name** and **shall be of type string**."
-
-### Proposed Solution
-
-Detect URI strings by property name convention:
-
-```go
-if property is string AND (
-    name ends with "Uri" OR
-    name ends with "URI" OR
-    name == "@Redfish.ActionInfo" OR
-    name == "Target" (when in Actions context)
-) → PropertyLink (not PropertySimple)
-```
-
-**Benefits:**
-- ✅ Spec-compliant (uses DMTF naming convention)
-- ✅ Robust (contract-based, not pattern matching URI content)
-- ✅ Maintainable (clear rule, easy to extend)
-
-### Implementation
-
-File: `rvfs/parser.go`
-
-In `parseProperty()`, before `default:` case for simple values, add:
-
-```go
-// Check if string property name indicates it's a URI (should be PropertyLink)
-if dataType == jsonparser.String {
-    nameIsURI := strings.HasSuffix(name, "Uri") ||
-                 strings.HasSuffix(name, "URI") ||
-                 name == "@Redfish.ActionInfo" ||
-                 name == "Target" // TODO: verify we're in Actions context
-
-    if nameIsURI {
-        strValue := string(value)
-        // Strip quotes
-        if len(strValue) >= 2 && strValue[0] == '"' && strValue[len(strValue)-1] == '"' {
-            strValue = strValue[1 : len(strValue)-1]
-        }
-        prop.Type = PropertyLink
-        prop.LinkTarget = strValue
-        return prop
+```json
+"Actions": {
+    "#ComputerSystem.Reset": {
+        "target": "/redfish/v1/Systems/1/Actions/ComputerSystem.Reset",
+        "@Redfish.ActionInfo": "/redfish/v1/Systems/1/ResetActionInfo",
+        "ResetType@Redfish.AllowableValues": ["On", "ForceOff", "GracefulShutdown"]
     }
 }
 ```
 
-### Testing
+With URI string detection (now implemented), `target` and `@Redfish.ActionInfo` are already `PropertyLink`s, so `open Actions/#ComputerSystem.Reset/@Redfish.ActionInfo` navigates to the ActionInfo resource which describes allowed parameters.
 
-Add test cases:
-- `@Redfish.ActionInfo` string → PropertyLink
-- `AssemblyBinaryDataUri` → PropertyLink
-- `ImageURI` → PropertyLink
-- Regular strings → PropertySimple (unchanged)
-- Verify navigation works: `open @Redfish.ActionInfo`
+### What an `action` command could look like
+
+```bash
+# List available actions on current resource
+action
+#   #ComputerSystem.Reset  → ResetType: [On, ForceOff, GracefulShutdown]
+
+# Invoke with arguments
+action #ComputerSystem.Reset ResetType=GracefulShutdown
+#   POST /redfish/v1/Systems/1/Actions/ComputerSystem.Reset
+#   {"ResetType": "GracefulShutdown"}
+#   → 200 OK
+
+# Shorthand (strip the #Type. prefix)
+action Reset ResetType=ForceOff
+```
+
+### Implementation Approach
+
+**Client layer** — add `Post(path string, body []byte) ([]byte, error)` to `client.go`. Similar to `Fetch` but uses POST with JSON body.
+
+**VFS layer** — add `InvokeAction(resourcePath, actionName string, params map[string]any) ([]byte, error)`:
+1. Get the resource at `resourcePath`
+2. Find the action in `resource.Properties["Actions"]`
+3. Extract the `target` PropertyLink
+4. Build JSON body from params
+5. POST to target via client
+
+**Shell layer** — add `action` command:
+1. No args: list actions on current resource (parse Actions property, show names + AllowableValues)
+2. With args: parse `Name key=value key=value`, invoke via VFS
+3. Tab completion: complete action names, then parameter names from AllowableValues annotations
+
+**Validation** — before POSTing:
+- Check parameter names against ActionInfo if available
+- Check parameter values against AllowableValues if present
+- Show clear error if action doesn't exist
 
 ### Open Questions
 
-1. `Target` detection - only in Actions, or broader?
-2. Other URI patterns we're missing?
-3. Should we validate the string looks like a path, or trust the name?
+1. Should `action` require confirmation before POSTing? (Probably yes — it's a write operation)
+2. How to handle Actions with no parameters (like simple Reset with default)?
+3. Should we display the response body? (Some actions return task URIs for long-running ops)
+4. PATCH operations for property writes — same command or separate `set` command?
 
 ---
 
@@ -117,13 +88,6 @@ Implement background graph crawler in TUI:
 6. Discovers cross-links and updates the graph
 ```
 
-**Benefits:**
-- ✅ Complete graph in memory for visualization
-- ✅ All parent pointers valid (enables "up" from any node)
-- ✅ Fast navigation (everything pre-loaded)
-- ✅ Cache stays fresh automatically
-- ✅ Can build graph visualizations (like graphui experiments)
-
 **Implementation Notes:**
 - Use channels to communicate updates to main UI thread
 - Show progress indicator during initial crawl
@@ -132,9 +96,3 @@ Implement background graph crawler in TUI:
 - Handle errors gracefully (some paths may 404)
 
 **Priority:** Medium (orphan loading solves immediate problem)
-
----
-
-## Other TODOs
-
-*(Add other items here as needed)*
