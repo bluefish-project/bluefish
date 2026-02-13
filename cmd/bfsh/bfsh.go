@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -103,27 +105,15 @@ func NewNavigator(vfs rvfs.VFS) *Navigator {
 
 // cd changes directory
 func (n *Navigator) cd(target string) error {
-	if target == "" || target == "~" {
-		n.cwd = "/redfish/v1"
-		resolved, _ := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
-		entries := n.listResolved(resolved)
-		fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
-		return nil
+	if target == "" {
+		target = "~"
 	}
 
-	if target == "." {
-		resolved, _ := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
-		entries := n.listResolved(resolved)
-		fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
-		return nil
-	}
-
-	if target == ".." {
-		n.cwd = n.vfs.Parent(n.cwd)
-		resolved, _ := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
-		entries := n.listResolved(resolved)
-		fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
-		return nil
+	// Expand ~ prefix to Redfish root
+	if target == "~" {
+		target = rvfs.RedfishRoot
+	} else if strings.HasPrefix(target, "~/") {
+		target = rvfs.RedfishRoot + "/" + target[2:]
 	}
 
 	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
@@ -143,9 +133,9 @@ func (n *Navigator) cd(target string) error {
 		case rvfs.PropertyObject, rvfs.PropertyArray:
 			// Navigate into property — compose the full path
 			if strings.HasPrefix(target, "/") {
-				n.cwd = strings.TrimRight(target, "/")
+				n.cwd = normalizePath(target)
 			} else {
-				n.cwd = n.cwd + "/" + target
+				n.cwd = normalizePath(path.Join(n.cwd, target))
 			}
 		default:
 			return fmt.Errorf("cannot cd to value: %s", target)
@@ -730,6 +720,11 @@ func findInProperty(prop *rvfs.Property, prefix string, re *regexp.Regexp, resul
 func (n *Navigator) scrape() error {
 	start := time.Now()
 
+	// Register signal listener for ^C cancellation
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	defer signal.Stop(sig)
+
 	// Build set of already cached paths
 	cached := make(map[string]bool)
 	for _, p := range n.vfs.GetKnownPaths() {
@@ -771,20 +766,35 @@ func (n *Navigator) scrape() error {
 	}
 
 	fetched := 0
-	errors := 0
 	total := len(queue)
+	var errMessages []string
+	cancelled := false
 
 	for len(queue) > 0 {
+		// Check for ^C cancellation
+		select {
+		case <-sig:
+			cancelled = true
+		default:
+		}
+		if cancelled {
+			break
+		}
+
 		path := queue[0]
 		queue = queue[1:]
 		fetched++
 
-		fmt.Printf("Fetching %s... (%d/%d)\n", path, fetched, total)
+		// In-place progress line
+		errPart := ""
+		if len(errMessages) > 0 {
+			errPart = fmt.Sprintf(", %d errors", len(errMessages))
+		}
+		fmt.Printf("\r\033[KFetching %s  (%d/%d%s)", path, fetched, total, errPart)
 
 		res, err := n.vfs.Get(path)
 		if err != nil {
-			fmt.Printf("  %s\n", errorStyle.Render(err.Error()))
-			errors++
+			errMessages = append(errMessages, fmt.Sprintf("  %s: %s", path, err.Error()))
 			continue
 		}
 
@@ -798,8 +808,17 @@ func (n *Navigator) scrape() error {
 		}
 	}
 
+	// Clear progress line and print summary
 	elapsed := time.Since(start)
-	fmt.Printf("Done: %d fetched, %d errors, %s\n", fetched, errors, elapsed.Round(time.Millisecond))
+	fmt.Print("\r\033[K")
+	if cancelled {
+		fmt.Printf("Cancelled: %d fetched, %d errors, %s\n", fetched, len(errMessages), elapsed.Round(time.Millisecond))
+	} else {
+		fmt.Printf("Done: %d fetched, %d errors, %s\n", fetched, len(errMessages), elapsed.Round(time.Millisecond))
+	}
+	for _, msg := range errMessages {
+		fmt.Println(msg)
+	}
 	return nil
 }
 
@@ -1034,6 +1053,11 @@ func getEntriesSummary(entries []*rvfs.Entry) string {
 	return strings.Join(parts, ", ")
 }
 
+// normalizePath ensures path has no trailing slash
+func normalizePath(p string) string {
+	return strings.TrimRight(p, "/")
+}
+
 func main() {
 	// Parse arguments: config file only
 	if len(os.Args) != 2 {
@@ -1106,12 +1130,14 @@ func main() {
 
 		line, err := rl.Readline()
 		if err != nil {
-			if err == readline.ErrInterrupt && nav.actionMode {
-				nav.actionMode = false
-				fmt.Println("Exited action mode")
+			if err == readline.ErrInterrupt {
+				if nav.actionMode {
+					nav.actionMode = false
+					fmt.Println("Exited action mode")
+				}
 				continue
 			}
-			break
+			break // EOF (^D) exits
 		}
 
 		line = strings.TrimSpace(line)
