@@ -1,17 +1,16 @@
 # Bluefish
 
-Three tools for navigating Redfish BMC APIs, built on a shared virtual filesystem layer that maps Redfish JSON resources onto familiar directory/file semantics.
+Two tools for navigating Redfish BMC APIs, built on a shared virtual filesystem layer that maps Redfish JSON resources onto familiar directory/file semantics.
 
 | Tool | Description |
 |------|-------------|
 | **bfsh** | Interactive shell with `cd`, `ls`, `ll`, tab completion, and action invocation |
 | **bfui** | Bubble Tea TUI with tree browser, search overlay, and action modal |
-| **tview** | Lightweight tview-based tree browser |
 
 ## Quick Start
 
 ```bash
-task            # builds bin/bfsh, bin/bfui, bin/tview
+task            # builds bin/bfsh, bin/bfui
 ```
 
 > Requires [Task](https://taskfile.dev). Or build manually: `go build -o bin/bfsh ./cmd/bfsh`
@@ -28,7 +27,6 @@ insecure: true
 ```bash
 bin/bfsh config.yaml     # Shell
 bin/bfui config.yaml     # TUI (Bubble Tea)
-bin/tview config.yaml    # TUI (tview)
 ```
 
 ## Architecture
@@ -37,7 +35,6 @@ bin/tview config.yaml    # TUI (tview)
 graph TD
     bfsh["bfsh<br/><i>CLI shell</i>"]
     bfui["bfui<br/><i>Bubble Tea TUI</i>"]
-    tview["tview<br/><i>tview TUI</i>"]
 
     vfs["rvfs.VFS<br/><i>ResolveTarget / Get / Post / ListAll</i>"]
     cache["ResourceCache<br/><i>fetch-on-miss, disk persistence</i>"]
@@ -47,7 +44,6 @@ graph TD
 
     bfsh --> vfs
     bfui --> vfs
-    tview --> vfs
     vfs --> cache
     cache --> parser
     cache --> client
@@ -246,8 +242,6 @@ cmd/
     styles.go         Lip Gloss style definitions
     messages.go       tea.Msg types
     render.go         Color-coded value formatting
-  tview/            tview TUI
-    main.go           Tree browser with details panel
 rvfs/               Virtual filesystem library
   vfs.go              VFS interface, path resolution
   types.go            Resource, Property, Child, Target types

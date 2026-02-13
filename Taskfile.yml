@@ -11,7 +11,7 @@ tasks:
 
   build:
     desc: Build all binaries
-    deps: [build:bfsh, build:bfui, build:tview]
+    deps: [build:bfsh, build:bfui]
 
   build:bfsh:
     desc: Build bfsh shell
@@ -36,18 +36,6 @@ tasks:
       - go.sum
     generates:
       - "{{.BIN_DIR}}/bfui"
-
-  build:tview:
-    desc: Build tview TUI
-    cmds:
-      - go build -o {{.BIN_DIR}}/tview ./cmd/tview
-    sources:
-      - cmd/tview/*.go
-      - rvfs/*.go
-      - go.mod
-      - go.sum
-    generates:
-      - "{{.BIN_DIR}}/tview"
 
   test:
     desc: Run all tests
