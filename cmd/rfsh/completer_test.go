@@ -17,7 +17,6 @@ func (m *mockVFSForCompletion) Get(path string) (*rvfs.Resource, error) {
 }
 
 func (m *mockVFSForCompletion) ListAll(path string) ([]*rvfs.Entry, error) {
-	// Return top-level entries
 	entries := []*rvfs.Entry{
 		{Name: "Name", Type: rvfs.EntryProperty},
 		{Name: "Status", Type: rvfs.EntryComplex},
@@ -28,7 +27,15 @@ func (m *mockVFSForCompletion) ListAll(path string) ([]*rvfs.Entry, error) {
 }
 
 func (m *mockVFSForCompletion) ResolveTarget(basePath, targetPath string) (*rvfs.Target, error) {
-	// Handle Boot property resolution
+	// Handle absolute path to cwd
+	if strings.HasPrefix(targetPath, "/") {
+		return &rvfs.Target{
+			Type:         rvfs.TargetResource,
+			Resource:     m.resource,
+			ResourcePath: targetPath,
+		}, nil
+	}
+
 	if targetPath == "Boot" {
 		bootProp := m.resource.Properties["Boot"]
 		return &rvfs.Target{
@@ -39,8 +46,7 @@ func (m *mockVFSForCompletion) ResolveTarget(basePath, targetPath string) (*rvfs
 		}, nil
 	}
 
-	// Handle Boot:BootOrder resolution
-	if targetPath == "Boot:BootOrder" {
+	if targetPath == "Boot/BootOrder" {
 		bootProp := m.resource.Properties["Boot"]
 		bootOrderProp := bootProp.Children["BootOrder"]
 		return &rvfs.Target{
@@ -54,59 +60,18 @@ func (m *mockVFSForCompletion) ResolveTarget(basePath, targetPath string) (*rvfs
 	return nil, &rvfs.NotFoundError{Path: targetPath}
 }
 
-func (m *mockVFSForCompletion) GetKnownPaths() []string {
-	return []string{"/redfish/v1/Systems/1"}
-}
-
-func (m *mockVFSForCompletion) Clear() {}
-
-func (m *mockVFSForCompletion) Sync() error {
-	return nil
-}
-
-func (m *mockVFSForCompletion) Parent(path string) string {
-	return "/redfish/v1"
-}
-
-func (m *mockVFSForCompletion) Stat(path string) (*rvfs.Entry, error) {
-	return nil, nil
-}
-
-func (m *mockVFSForCompletion) Exists(path string) bool {
-	return false
-}
-
-func (m *mockVFSForCompletion) ListChildren(path string) ([]*rvfs.Child, error) {
-	return nil, nil
-}
-
 func (m *mockVFSForCompletion) ListProperties(path string) ([]*rvfs.Property, error) {
 	return nil, nil
 }
 
-func (m *mockVFSForCompletion) GetProperty(resourcePath, propertyPath string) (*rvfs.Property, error) {
-	return nil, nil
+func (m *mockVFSForCompletion) GetKnownPaths() []string {
+	return []string{"/redfish/v1/Systems/1"}
 }
 
-func (m *mockVFSForCompletion) ListProperty(resourcePath, propertyPath string) ([]*rvfs.Entry, error) {
-	return nil, nil
-}
-
-func (m *mockVFSForCompletion) Resolve(currentPath, target string) (string, error) {
-	return "", nil
-}
-
-func (m *mockVFSForCompletion) Join(base, target string) string {
-	return ""
-}
-
-func (m *mockVFSForCompletion) Invalidate(path string) {}
-
-func (m *mockVFSForCompletion) IsOffline() bool {
-	return false
-}
-
-func (m *mockVFSForCompletion) SetOffline(offline bool) {}
+func (m *mockVFSForCompletion) Clear()          {}
+func (m *mockVFSForCompletion) Sync() error     { return nil }
+func (m *mockVFSForCompletion) Parent(p string) string { return "/redfish/v1" }
+func (m *mockVFSForCompletion) Join(b, t string) string { return "" }
 
 func createTestResource() *rvfs.Resource {
 	return &rvfs.Resource{
@@ -169,31 +134,31 @@ func TestCompleter_PropertyCompletion(t *testing.T) {
 		name           string
 		partial        string
 		expectedPrefix string
-		wantMatch      []string // At least these should be in results
+		wantMatch      []string // At least these should be in results (with suffixes)
 	}{
 		{
-			name:           "complete after property colon",
-			partial:        "Boot:",
+			name:           "complete after property slash",
+			partial:        "Boot/",
 			expectedPrefix: "",
-			wantMatch:      []string{"BootOrder", "BootSourceOverrideTarget"},
+			wantMatch:      []string{"BootOrder[", "BootSourceOverrideTarget/"},
 		},
 		{
-			name:           "complete partial property name after colon",
-			partial:        "Boot:Boot",
+			name:           "complete partial property name after slash",
+			partial:        "Boot/Boot",
 			expectedPrefix: "Boot",
-			wantMatch:      []string{"BootOrder", "BootSourceOverrideTarget"},
+			wantMatch:      []string{"BootOrder[", "BootSourceOverrideTarget/"},
 		},
 		{
 			name:           "complete at top level",
 			partial:        "",
 			expectedPrefix: "",
-			wantMatch:      []string{"Name", "Status", "Boot", "Storage"},
+			wantMatch:      []string{"Name", "Status/", "Boot/", "Storage/"},
 		},
 		{
 			name:           "complete partial top level",
 			partial:        "Bo",
 			expectedPrefix: "Bo",
-			wantMatch:      []string{"Boot"},
+			wantMatch:      []string{"Boot/"},
 		},
 	}
 
@@ -237,12 +202,10 @@ func TestCompleter_IncompleteBracket(t *testing.T) {
 	}
 	completer := NewCompleter(nav)
 
-	// This should not panic when user types "Boot:BootOrder[" during tab completion
-	// It will fail to resolve, but shouldn't crash
-	completions, _ := completer.completePath("Boot:BootOrder[")
+	// This should not panic when user types "Boot/BootOrder[" during tab completion
+	completions, _ := completer.completePath("Boot/BootOrder[")
 
-	// We expect empty or error, but NOT a panic
-	// The key test is that we got here without crashing
+	// We expect array index completions, but NOT a panic
 	_ = completions
 }
 
@@ -255,50 +218,35 @@ func TestCompleter_ArrayIndexCompletion(t *testing.T) {
 	}
 	completer := NewCompleter(nav)
 
-	// When completing after "[", should return just the index numbers, not "[0]"
-	// This prevents "BootOrder[<tab>" from becoming "BootOrder[[0]"
-	completions, prefixLen := completer.completePath("Boot:BootOrder[")
+	completions, prefixLen := completer.completePath("Boot/BootOrder[")
 
 	if prefixLen != 0 {
 		t.Errorf("Expected prefix length 0, got %d", prefixLen)
 	}
 
-	// Convert rune slices back to strings
 	results := make([]string, len(completions))
 	for i, c := range completions {
 		results[i] = string(c)
 	}
 
-	// Should have completions for array indices
 	if len(results) == 0 {
 		t.Fatal("Expected array index completions, got none")
 	}
 
-	// Verify completions are just numbers, not "[0]", "[1]"
-	for _, result := range results {
-		if strings.HasPrefix(result, "[") {
-			t.Errorf("Array index completion should not include brackets, got: %q", result)
-		}
-		// Should be numeric
-		if result != "0" && result != "1" {
-			t.Errorf("Expected numeric index, got: %q", result)
-		}
-	}
-
-	// Verify we got both indices
+	// Should be "0]" and "1]" — bare index with closing bracket
 	found0 := false
 	found1 := false
 	for _, result := range results {
-		if result == "0" {
+		if result == "0]" {
 			found0 = true
 		}
-		if result == "1" {
+		if result == "1]" {
 			found1 = true
 		}
 	}
 
 	if !found0 || !found1 {
-		t.Errorf("Expected completions for indices 0 and 1, got: %v", results)
+		t.Errorf("Expected completions '0]' and '1]', got: %v", results)
 	}
 }
 
@@ -318,20 +266,20 @@ func TestCompleter_InvalidSeparatorCombinations(t *testing.T) {
 		reason      string
 	}{
 		{
-			name:        "colon after array property",
-			partial:     "Boot:BootOrder:",
+			name:        "slash after array property",
+			partial:     "Boot/BootOrder/",
 			shouldEmpty: true,
-			reason:      "Cannot use : separator on array - must use [",
+			reason:      "Cannot use / separator on array - must use [",
 		},
 		{
 			name:        "bracket after object property",
 			partial:     "Boot[",
 			shouldEmpty: true,
-			reason:      "Cannot use [ separator on object - must use :",
+			reason:      "Cannot use [ separator on object - must use /",
 		},
 		{
 			name:        "bracket after nested object",
-			partial:     "Boot:BootSourceOverrideTarget[",
+			partial:     "Boot/BootSourceOverrideTarget[",
 			shouldEmpty: true,
 			reason:      "Cannot use [ separator on link property",
 		},
@@ -349,10 +297,6 @@ func TestCompleter_InvalidSeparatorCombinations(t *testing.T) {
 }
 
 func TestCompleter_ComplexSeparatorCompositions(t *testing.T) {
-	// Test valid complex combinations of separators
-	// This verifies our generic separator handling works for multi-level navigation
-
-	// Create a more complex resource with nested arrays of objects
 	complexResource := &rvfs.Resource{
 		Path: "/redfish/v1/Systems/1",
 		Properties: map[string]*rvfs.Property{
@@ -381,7 +325,6 @@ func TestCompleter_ComplexSeparatorCompositions(t *testing.T) {
 		},
 	}
 
-	// Create a custom mock VFS for this test
 	mockVFS := &mockVFSForComplexCompletion{resource: complexResource}
 
 	nav := &Navigator{
@@ -390,26 +333,23 @@ func TestCompleter_ComplexSeparatorCompositions(t *testing.T) {
 	}
 	completer := NewCompleter(nav)
 
-	// Test: After navigating to array element with [, then use : to complete properties
-	// Pattern: ArrayProp[index]:
-	completions, prefixLen := completer.completePath("PCIeDevices[0]:")
+	// Test: After navigating to array element with [, then use / to complete properties
+	completions, prefixLen := completer.completePath("PCIeDevices[0]/")
 
 	if prefixLen != 0 {
 		t.Errorf("Expected prefix length 0, got %d", prefixLen)
 	}
 
-	// Convert results
 	results := make([]string, len(completions))
 	for i, c := range completions {
 		results[i] = string(c)
 	}
 
-	// Should get property completions from the object at array index 0
 	if len(results) == 0 {
 		t.Error("Expected property completions after navigating into array element, got none")
 	}
 
-	// Check that we get the expected properties
+	// Simple properties — no suffix
 	expectedProps := map[string]bool{
 		"DeviceType":      false,
 		"FirmwareVersion": false,
@@ -423,7 +363,7 @@ func TestCompleter_ComplexSeparatorCompositions(t *testing.T) {
 
 	for prop, found := range expectedProps {
 		if !found {
-			t.Errorf("Expected property %q in completions after PCIeDevices[0]:, got: %v", prop, results)
+			t.Errorf("Expected property %q in completions after PCIeDevices[0]/, got: %v", prop, results)
 		}
 	}
 }
@@ -442,7 +382,6 @@ func (m *mockVFSForComplexCompletion) ListAll(path string) ([]*rvfs.Entry, error
 }
 
 func (m *mockVFSForComplexCompletion) ResolveTarget(basePath, targetPath string) (*rvfs.Target, error) {
-	// Handle PCIeDevices[0] - should resolve to the array element (an object)
 	if targetPath == "PCIeDevices[0]" {
 		arrayProp := m.resource.Properties["PCIeDevices"]
 		elementProp := arrayProp.Elements[0]
@@ -456,26 +395,12 @@ func (m *mockVFSForComplexCompletion) ResolveTarget(basePath, targetPath string)
 	return nil, &rvfs.NotFoundError{Path: targetPath}
 }
 
-func (m *mockVFSForComplexCompletion) GetKnownPaths() []string               { return nil }
-func (m *mockVFSForComplexCompletion) Clear()                                {}
-func (m *mockVFSForComplexCompletion) Sync() error                           { return nil }
-func (m *mockVFSForComplexCompletion) Parent(path string) string             { return "" }
-func (m *mockVFSForComplexCompletion) Stat(path string) (*rvfs.Entry, error) { return nil, nil }
-func (m *mockVFSForComplexCompletion) Exists(path string) bool               { return false }
-func (m *mockVFSForComplexCompletion) ListChildren(path string) ([]*rvfs.Child, error) {
-	return nil, nil
-}
 func (m *mockVFSForComplexCompletion) ListProperties(path string) ([]*rvfs.Property, error) {
 	return nil, nil
 }
-func (m *mockVFSForComplexCompletion) GetProperty(rp, pp string) (*rvfs.Property, error) {
-	return nil, nil
-}
-func (m *mockVFSForComplexCompletion) ListProperty(rp, pp string) ([]*rvfs.Entry, error) {
-	return nil, nil
-}
-func (m *mockVFSForComplexCompletion) Resolve(cp, t string) (string, error) { return "", nil }
-func (m *mockVFSForComplexCompletion) Join(b, t string) string              { return "" }
-func (m *mockVFSForComplexCompletion) Invalidate(path string)               {}
-func (m *mockVFSForComplexCompletion) IsOffline() bool                      { return false }
-func (m *mockVFSForComplexCompletion) SetOffline(offline bool)              {}
+
+func (m *mockVFSForComplexCompletion) GetKnownPaths() []string   { return nil }
+func (m *mockVFSForComplexCompletion) Clear()                    {}
+func (m *mockVFSForComplexCompletion) Sync() error               { return nil }
+func (m *mockVFSForComplexCompletion) Parent(path string) string { return "" }
+func (m *mockVFSForComplexCompletion) Join(b, t string) string   { return "" }

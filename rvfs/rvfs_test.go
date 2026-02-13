@@ -256,7 +256,7 @@ func TestVFS_PathResolution(t *testing.T) {
 	})
 
 	t.Run("simple property access", func(t *testing.T) {
-		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "Status:Health")
+		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "Status/Health")
 		if err != nil {
 			t.Fatalf("ResolveTarget failed: %v", err)
 		}
@@ -273,7 +273,7 @@ func TestVFS_PathResolution(t *testing.T) {
 	})
 
 	t.Run("array indexing", func(t *testing.T) {
-		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "Boot:BootOrder[0]")
+		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "Boot/BootOrder[0]")
 		if err != nil {
 			t.Fatalf("ResolveTarget failed: %v", err)
 		}
@@ -287,7 +287,7 @@ func TestVFS_PathResolution(t *testing.T) {
 	})
 
 	t.Run("composite path - resource then property", func(t *testing.T) {
-		target, err := vfs.ResolveTarget("/redfish/v1", "Systems/1/Status:Health")
+		target, err := vfs.ResolveTarget("/redfish/v1", "Systems/1/Status/Health")
 		if err != nil {
 			t.Fatalf("ResolveTarget failed: %v", err)
 		}
@@ -301,7 +301,7 @@ func TestVFS_PathResolution(t *testing.T) {
 	})
 
 	t.Run("property link", func(t *testing.T) {
-		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "Links:Chassis[0]")
+		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "Links/Chassis[0]")
 		if err != nil {
 			t.Fatalf("ResolveTarget failed: %v", err)
 		}
@@ -315,7 +315,7 @@ func TestVFS_PathResolution(t *testing.T) {
 	})
 
 	t.Run("nested property access", func(t *testing.T) {
-		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "Status:State")
+		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "Status/State")
 		if err != nil {
 			t.Fatalf("ResolveTarget failed: %v", err)
 		}

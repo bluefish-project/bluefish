@@ -40,52 +40,47 @@ At parse time, for each top-level JSON key:
 
 ### How ResolveTarget Processes Paths
 
-**Hierarchical processing** (3 levels):
+**Unified `/` navigation** — all paths use `/` as the only separator:
 
-1. **Split by `/`** into segments (e.g., `["Systems", "1", "Status:Health"]`)
+1. **Split by `/`** into segments (e.g., `["Systems", "1", "Status", "Health"]`)
 2. **For each segment**:
-   - **If contains `:`**: Split by `:` and navigate property tree
-   - **Else**: Check `Children` first, then `Properties` (with `[n]` array indexing)
-3. **If PropertyLink + more segments**: Follow link, continue in target resource
+   - **In resource mode**: Check `Children` first, then `Properties`
+   - **In property mode**: Check property `Children` (named fields)
+   - `[n]` within a segment handles array indexing (e.g., `BootOrder[0]`)
+3. **Mode transitions**:
+   - Segment matches a `Property` → enter property mode
+   - `PropertyLink` + more segments → follow link, back to resource mode
+   - `PropertyObject` + more segments → descend into children, stay in property mode
 
-**Example trace**: `/redfish/v1/Systems/1/Status:Health`
+**Example trace**: `/redfish/v1/Systems/1/Status/Health`
 
 ```
-Split by /: ["redfish", "v1", "Systems", "1", "Status:Health"]
+Split by /: ["redfish", "v1", "Systems", "1", "Status", "Health"]
 
-Process "redfish"  → Child nav → /redfish
-Process "v1"       → Child nav → /redfish/v1
-Process "Systems"  → Child nav → /redfish/v1/Systems (Collection)
-Process "1"        → Children["1"] → fetch /redfish/v1/Systems/1 (ComputerSystem)
-Process "Status:Health":
-  ├─ Contains : → split ["Status", "Health"]
-  ├─ Properties["Status"] → PropertyObject
-  └─ .Children["Health"] → PropertySimple
+Process "redfish"  → Child → /redfish
+Process "v1"       → Child → /redfish/v1
+Process "Systems"  → Child → /redfish/v1/Systems (Collection)
+Process "1"        → Child → fetch /redfish/v1/Systems/1
+Process "Status"   → not a Child → Property (PropertyObject) → enter property mode
+Process "Health"   → property child → PropertySimple → return
 ```
 
-### Why Path Structure Matters
+**Example with link following**: `Oem/Supermicro/NodeManager/Id`
 
-**Segment boundaries** (where `/` splits) determine navigation mode:
-
-✅ **VALID**: `/Systems/1/Status:Health`
-- Segments: `["Systems", "1", "Status:Health"]`
-- Navigate to Child "1", THEN access property "Status:Health"
-
-❌ **INVALID**: `/Systems/1:Status:Health`
-- Segments: `["Systems", "1:Status:Health"]`
-- Tries to access Property "1" (doesn't exist, "1" is a Child!)
-
-**The key**: In real Redfish systems, `/redfish/v1/Systems` has:
-```json
-{
-  "Members": [{"@odata.id": "/redfish/v1/Systems/1"}]
-}
 ```
-This creates `Children["1"]`, NOT `Properties["1"]`.
+Process "Oem"          → Property (PropertyObject) → property mode
+Process "Supermicro"   → property child (PropertyObject) → descend
+Process "NodeManager"  → property child (PropertyLink) → follow link → resource mode
+Process "Id"           → fetch linked resource → Property (PropertySimple) → return
+```
+
+### Why This Works
+
+Children and Properties never collide on the same name. The Redfish spec ensures a top-level key is either a link-only object (`Child`) or a data object (`Property`), never both. So checking Children first, then Properties, is unambiguous.
 
 ### Client Code Rules
 
-1. **NEVER parse paths** with `strings.Split`, `strings.Contains(path, ":")`, regex, etc.
+1. **NEVER parse paths** with `strings.Split`, regex, etc.
 2. **ALWAYS use `vfs.ResolveTarget(basePath, targetPath)`**
 3. **Use typed results**:
    ```go
@@ -104,9 +99,8 @@ This creates `Children["1"]`, NOT `Properties["1"]`.
 
 ### Common Mistakes to AVOID
 
-❌ Parsing paths yourself: `strings.SplitN(path, ":", 2)`
+❌ Parsing paths yourself: `strings.SplitN(path, "/", 2)` then manual lookup
 ❌ Type checking via strings: `if strings.Contains(path, ":")`
-❌ Assuming structure: "anything with `:` is a property"
 ❌ Manual navigation: `resource.Properties[segments[0]].Children[segments[1]]`
 
 ✅ Use ResolveTarget for ALL path navigation

@@ -77,7 +77,7 @@ func (c *Completer) completePath(partial string) ([][]rune, int) {
 		knownPaths := c.nav.vfs.GetKnownPaths()
 		for _, p := range knownPaths {
 			if strings.HasPrefix(p, partial) {
-				completions = append(completions, p)
+				completions = append(completions, p+"/")
 			}
 		}
 		return toRuneSlices(completions, len(partial)), len(partial)
@@ -88,17 +88,19 @@ func (c *Completer) completePath(partial string) ([][]rune, int) {
 
 	// Resolve the base path (or use cwd if empty)
 	var entries []*rvfs.Entry
-	var err error
 
 	if base == "" {
-		// Complete at current location
-		entries, err = c.nav.vfs.ListAll(c.nav.cwd)
+		// Complete at current location — resolve cwd through ResolveTarget
+		// so it works for both resource and property paths
+		resolved, err := c.nav.vfs.ResolveTarget(rvfs.RedfishRoot, c.nav.cwd)
 		if err != nil {
 			return nil, 0
 		}
+		entries = c.nav.listResolved(resolved)
+
 		// Add special paths for resource navigation
 		if strings.HasPrefix("..", prefix) {
-			completions = append(completions, "..")
+			completions = append(completions, "../")
 		}
 		if strings.HasPrefix("~", prefix) {
 			completions = append(completions, "~")
@@ -111,16 +113,14 @@ func (c *Completer) completePath(partial string) ([][]rune, int) {
 		}
 
 		// Get entries based on target type and separator
-		entries, err = c.getEntriesFromTarget(target, separator)
-		if err != nil {
-			return nil, 0
-		}
+		entries, _ = c.getEntriesFromTarget(target, separator)
 	}
 
-	// Filter entries by prefix
+	// Filter entries by prefix, adding appropriate suffix
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name, prefix) {
-			completions = append(completions, entry.Name)
+			name := entry.Name + completionSuffix(entry, separator)
+			completions = append(completions, name)
 		}
 	}
 
@@ -128,31 +128,40 @@ func (c *Completer) completePath(partial string) ([][]rune, int) {
 	return toRuneSlices(completions, len(prefix)), len(prefix)
 }
 
+// completionSuffix returns the appropriate suffix for tab completion
+func completionSuffix(entry *rvfs.Entry, separator rune) string {
+	if separator == '[' {
+		// Inside array bracket — close it
+		return "]"
+	}
+	switch entry.Type {
+	case rvfs.EntryLink, rvfs.EntrySymlink, rvfs.EntryComplex:
+		return "/"
+	case rvfs.EntryArray:
+		return "["
+	}
+	return ""
+}
+
 // splitForCompletion splits a partial path into base, separator, and prefix
 // The separator indicates what kind of completion is expected:
-//   '/' → resource children
-//   ':' → property children (named fields)
+//   '/' → children (resource or property)
 //   '[' → array indices
 // Examples:
-//   "Status:Hea" → ("Status", ':', "Hea")
-//   "Boot:" → ("Boot", ':', "")
-//   "Boot:BootOrder[" → ("Boot:BootOrder", '[', "")
+//   "Status/Hea" → ("Status", '/', "Hea")
+//   "Boot/" → ("Boot", '/', "")
+//   "Boot/BootOrder[" → ("Boot/BootOrder", '[', "")
 //   "Systems/1" → ("Systems", '/', "1")
 //   "Status" → ("", 0, "Status")
 //   "" → ("", 0, "")
 func (c *Completer) splitForCompletion(partial string) (base string, separator rune, prefix string) {
-	// Find the last separator (: / or [)
-	lastColon := strings.LastIndex(partial, ":")
+	// Find the last separator (/ or [)
 	lastSlash := strings.LastIndex(partial, "/")
 	lastBracket := strings.LastIndex(partial, "[")
 
 	// Find the rightmost separator
 	lastSep := -1
 	var sep rune
-	if lastColon > lastSep {
-		lastSep = lastColon
-		sep = ':'
-	}
 	if lastSlash > lastSep {
 		lastSep = lastSlash
 		sep = '/'
@@ -190,58 +199,38 @@ func (c *Completer) getEntriesFromTarget(target *rvfs.Target, separator rune) ([
 
 // createEntriesFromProperty creates Entry objects from a Property's children/elements
 // The separator indicates what kind of completion is expected:
-//   ':' → property children (only valid for PropertyObject)
-//   '[' → array indices (only valid for PropertyArray)
-//   0   → no separator, return appropriate entries for property type
+//
+//	'/' → property children (only valid for PropertyObject)
+//	'[' → array indices (only valid for PropertyArray)
+//	0   → no separator, return appropriate entries for property type
 func (c *Completer) createEntriesFromProperty(prop *rvfs.Property, separator rune) []*rvfs.Entry {
 	var entries []*rvfs.Entry
 
 	switch prop.Type {
 	case rvfs.PropertyObject:
-		// Objects have named child properties
-		// Only return them if separator is ':' or no separator
 		if separator == '[' {
-			// Can't use [ on an object
-			return nil
+			return nil // Can't use [ on an object
 		}
-
 		for name, child := range prop.Children {
-			entryType := rvfs.EntryProperty
-			if child.Type == rvfs.PropertyLink {
-				entryType = rvfs.EntrySymlink
-			} else if child.Type != rvfs.PropertySimple {
-				entryType = rvfs.EntryComplex
-			}
 			entries = append(entries, &rvfs.Entry{
 				Name: name,
-				Type: entryType,
+				Type: entryTypeForProperty(child),
 			})
 		}
 
 	case rvfs.PropertyArray:
-		// Arrays have indexed elements
-		// Only return them if separator is '[' or no separator
-		if separator == ':' {
-			// Can't use : on an array - must use [
-			return nil
+		if separator == '/' {
+			return nil // Can't use / on an array — must use [
 		}
-
-		// Return array indices as bare numbers (strip brackets from [0], [1], etc.)
 		for _, elem := range prop.Elements {
-			entryType := rvfs.EntryProperty
-			if elem.Type != rvfs.PropertySimple {
-				entryType = rvfs.EntryComplex
-			}
-
 			// Strip brackets from element name to get bare index
 			name := elem.Name
 			if strings.HasPrefix(name, "[") && strings.HasSuffix(name, "]") {
 				name = name[1 : len(name)-1]
 			}
-
 			entries = append(entries, &rvfs.Entry{
 				Name: name,
-				Type: entryType,
+				Type: entryTypeForProperty(elem),
 			})
 		}
 	}

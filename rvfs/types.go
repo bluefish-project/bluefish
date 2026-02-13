@@ -11,7 +11,8 @@ type EntryType int
 const (
 	EntryResource EntryType = iota // Directory (Redfish resource)
 	EntryProperty                   // File (simple property)
-	EntryComplex                    // File (complex property - object/array)
+	EntryComplex                    // Directory (object property - navigable with /)
+	EntryArray                      // Directory (array property - navigable with [n])
 	EntryLink                       // Directory (child resource link)
 	EntrySymlink                    // Symlink (external resource reference)
 )
@@ -25,9 +26,9 @@ type Entry struct {
 	Modified time.Time
 }
 
-// IsDir returns true if entry represents a navigable resource
+// IsDir returns true if entry is navigable
 func (e Entry) IsDir() bool {
-	return e.Type == EntryResource || e.Type == EntryLink
+	return e.Type == EntryResource || e.Type == EntryLink || e.Type == EntryComplex || e.Type == EntryArray || e.Type == EntrySymlink
 }
 
 // Resource represents a Redfish resource at a specific path
@@ -46,7 +47,7 @@ func (r *Resource) GetProperty(name string) (*Property, error) {
 	if prop, ok := r.Properties[name]; ok {
 		return prop, nil
 	}
-	return nil, &NotFoundError{Path: r.Path + "." + name}
+	return nil, &NotFoundError{Path: r.Path + "/" + name}
 }
 
 // GetChild retrieves a child by name

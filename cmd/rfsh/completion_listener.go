@@ -76,18 +76,13 @@ func (c *CompletionListener) prefetch(partial string) {
 }
 
 // splitForCompletion splits a partial path into base and prefix
-// Reuse the same logic as Completer
 func (c *CompletionListener) splitForCompletion(partial string) (base, prefix string) {
-	// Find the last separator (: / or [)
-	lastColon := strings.LastIndex(partial, ":")
+	// Find the last separator (/ or [)
 	lastSlash := strings.LastIndex(partial, "/")
 	lastBracket := strings.LastIndex(partial, "[")
 
 	// Find the rightmost separator
 	lastSep := -1
-	if lastColon > lastSep {
-		lastSep = lastColon
-	}
 	if lastSlash > lastSep {
 		lastSep = lastSlash
 	}

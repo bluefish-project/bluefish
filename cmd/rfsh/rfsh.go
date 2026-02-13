@@ -22,12 +22,8 @@ import (
 var (
 	colorCyan     = color.New(color.FgCyan)
 	colorGreen    = color.New(color.FgGreen)
-	colorRed      = color.New(color.FgRed)
 	colorPurple   = color.New(color.FgMagenta)
-	colorMagenta  = color.New(color.FgMagenta)
 	colorYellow   = color.New(color.FgYellow)
-	colorBlue     = color.New(color.FgBlue)
-	colorWhite    = color.New(color.FgWhite)
 	colorBold     = color.New(color.Bold)
 	colorBoldBlue = color.New(color.FgBlue, color.Bold)
 )
@@ -84,30 +80,27 @@ func NewNavigator(vfs rvfs.VFS) *Navigator {
 func (n *Navigator) cd(target string) error {
 	if target == "" || target == "~" {
 		n.cwd = "/redfish/v1"
-		entries, _ := n.vfs.ListAll(n.cwd)
-		summary := getEntriesSummary(entries)
-		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		resolved, _ := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+		entries := n.listResolved(resolved)
+		fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
 		return nil
 	}
 
-	// Special case for current directory
 	if target == "." {
-		entries, _ := n.vfs.ListAll(n.cwd)
-		summary := getEntriesSummary(entries)
-		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		resolved, _ := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+		entries := n.listResolved(resolved)
+		fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
 		return nil
 	}
 
-	// Special case for parent
 	if target == ".." {
 		n.cwd = n.vfs.Parent(n.cwd)
-		entries, _ := n.vfs.ListAll(n.cwd)
-		summary := getEntriesSummary(entries)
-		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		resolved, _ := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+		entries := n.listResolved(resolved)
+		fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
 		return nil
 	}
 
-	// Resolve the target
 	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
 	if err != nil {
 		return err
@@ -115,31 +108,27 @@ func (n *Navigator) cd(target string) error {
 
 	switch resolvedTarget.Type {
 	case rvfs.TargetResource:
-		// Navigate to the resource - use the actual resource path
 		n.cwd = resolvedTarget.ResourcePath
-		entries, _ := n.vfs.ListAll(n.cwd)
-		summary := getEntriesSummary(entries)
-		fmt.Printf("%s  (%s)\n", n.cwd, summary)
-		return nil
 
 	case rvfs.TargetLink:
-		// For links, keep the composite path we navigated through
-		if strings.HasPrefix(target, "/") {
-			// Absolute path - use as-is (might be composite like /redfish/v1/Oem:Ami:Configurations)
-			n.cwd = strings.TrimRight(target, "/")
-		} else {
-			// Relative path - append to current directory
-			n.cwd = n.vfs.Join(n.cwd, target)
-		}
-		entries, _ := n.vfs.ListAll(n.cwd)
-		summary := getEntriesSummary(entries)
-		fmt.Printf("%s  (%s)\n", n.cwd, summary)
-		return nil
+		n.cwd = resolvedTarget.ResourcePath
 
 	case rvfs.TargetProperty:
-		return fmt.Errorf("cannot cd to property: %s", target)
+		switch resolvedTarget.Property.Type {
+		case rvfs.PropertyObject, rvfs.PropertyArray:
+			// Navigate into property — compose the full path
+			if strings.HasPrefix(target, "/") {
+				n.cwd = strings.TrimRight(target, "/")
+			} else {
+				n.cwd = n.cwd + "/" + target
+			}
+		default:
+			return fmt.Errorf("cannot cd to value: %s", target)
+		}
 	}
 
+	entries := n.listResolved(resolvedTarget)
+	fmt.Printf("%s  (%s)\n", n.cwd, getEntriesSummary(entries))
 	return nil
 }
 
@@ -197,137 +186,130 @@ func (n *Navigator) open(target string) error {
 
 // ls lists all entries (children + properties)
 func (n *Navigator) ls(target string) error {
-	// Handle . as current directory
 	if target == "." {
 		target = ""
 	}
 
+	// Resolve the path
+	var resolved *rvfs.Target
+	var err error
 	if target == "" {
-		// No target, list current resource
-		entries, err := n.vfs.ListAll(n.cwd)
-		if err != nil {
-			return err
-		}
-		n.printShortListingAll(entries)
-		return nil
+		resolved, err = n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+	} else {
+		resolved, err = n.vfs.ResolveTarget(n.cwd, target)
 	}
-
-	// Resolve the target
-	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
 	if err != nil {
 		return err
 	}
 
-	switch resolvedTarget.Type {
-	case rvfs.TargetResource, rvfs.TargetLink:
-		// List the resource contents (following links like ll does)
-		entries, err := n.vfs.ListAll(resolvedTarget.ResourcePath)
-		if err != nil {
-			return err
-		}
-		n.printShortListingAll(entries)
-		return nil
-
-	case rvfs.TargetProperty:
-		// Show the property itself as a single entry
-		entry := n.createEntryFromTarget(target, resolvedTarget)
-		n.printShortListingAll([]*rvfs.Entry{entry})
-		return nil
-	}
-
+	entries := n.listResolved(resolved)
+	n.printShortListingAll(entries)
 	return nil
 }
 
-// createEntryFromTarget creates an Entry from a resolved Target
-func (n *Navigator) createEntryFromTarget(name string, target *rvfs.Target) *rvfs.Entry {
-	entry := &rvfs.Entry{Name: name}
+// entriesFromProperty creates Entry list from a property's children/elements
+func entriesFromProperty(prop *rvfs.Property) []*rvfs.Entry {
+	var entries []*rvfs.Entry
 
-	switch target.Type {
-	case rvfs.TargetResource:
-		entry.Type = rvfs.EntryLink
-		entry.Path = target.ResourcePath
-
-	case rvfs.TargetLink:
-		entry.Type = rvfs.EntrySymlink
-		entry.Path = target.ResourcePath
-
-	case rvfs.TargetProperty:
-		switch target.Property.Type {
-		case rvfs.PropertySimple:
-			entry.Type = rvfs.EntryProperty
-		case rvfs.PropertyLink:
-			entry.Type = rvfs.EntrySymlink
-			entry.Path = target.Property.LinkTarget
-		default:
-			entry.Type = rvfs.EntryComplex
+	switch prop.Type {
+	case rvfs.PropertyObject:
+		for name, child := range prop.Children {
+			entries = append(entries, &rvfs.Entry{
+				Name: name,
+				Path: child.LinkTarget,
+				Type: entryTypeForProperty(child),
+			})
+		}
+	case rvfs.PropertyArray:
+		for _, elem := range prop.Elements {
+			entries = append(entries, &rvfs.Entry{
+				Name: elem.Name,
+				Type: entryTypeForProperty(elem),
+			})
 		}
 	}
 
-	return entry
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name < entries[j].Name
+	})
+	return entries
+}
+
+// entryTypeForProperty maps property types to entry types
+func entryTypeForProperty(prop *rvfs.Property) rvfs.EntryType {
+	switch prop.Type {
+	case rvfs.PropertyObject:
+		return rvfs.EntryComplex
+	case rvfs.PropertyArray:
+		return rvfs.EntryArray
+	case rvfs.PropertyLink:
+		return rvfs.EntrySymlink
+	default:
+		return rvfs.EntryProperty
+	}
+}
+
+// listResolved returns entries for any resolved target
+func (n *Navigator) listResolved(target *rvfs.Target) []*rvfs.Entry {
+	switch target.Type {
+	case rvfs.TargetResource, rvfs.TargetLink:
+		entries, _ := n.vfs.ListAll(target.ResourcePath)
+		return entries
+	case rvfs.TargetProperty:
+		return entriesFromProperty(target.Property)
+	}
+	return nil
 }
 
 // dump displays raw JSON
 func (n *Navigator) dump(target string) error {
+	// Resolve the path
+	var resolved *rvfs.Target
+	var err error
 	if target == "" {
-		// Dump current resource
-		resource, err := n.vfs.Get(n.cwd)
-		if err != nil {
-			return err
-		}
-		var buf bytes.Buffer
-		json.Indent(&buf, resource.RawJSON, "", "  ")
-		fmt.Println(buf.String())
-		return nil
+		resolved, err = n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+	} else {
+		resolved, err = n.vfs.ResolveTarget(n.cwd, target)
 	}
-
-	// Resolve the target
-	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
 	if err != nil {
 		return err
 	}
 
-	switch resolvedTarget.Type {
+	var buf bytes.Buffer
+	switch resolved.Type {
 	case rvfs.TargetResource, rvfs.TargetLink:
-		var buf bytes.Buffer
-		json.Indent(&buf, resolvedTarget.Resource.RawJSON, "", "  ")
-		fmt.Println(buf.String())
-
+		json.Indent(&buf, resolved.Resource.RawJSON, "", "  ")
 	case rvfs.TargetProperty:
-		var buf bytes.Buffer
-		json.Indent(&buf, resolvedTarget.Property.RawJSON, "", "  ")
-		fmt.Println(buf.String())
+		json.Indent(&buf, resolved.Property.RawJSON, "", "  ")
 	}
-
+	fmt.Println(buf.String())
 	return nil
 }
 
 // ll displays formatted content using parsed structure
 func (n *Navigator) ll(target string) error {
-	// Handle . as current directory
 	if target == "." {
 		target = ""
 	}
 
+	// Resolve the path
+	var resolved *rvfs.Target
+	var err error
 	if target == "" {
-		// List current resource - show formatted summary
-		return n.showResource(n.cwd)
+		resolved, err = n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+	} else {
+		resolved, err = n.vfs.ResolveTarget(n.cwd, target)
 	}
-
-	// Resolve the target
-	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
 	if err != nil {
 		return err
 	}
 
-	switch resolvedTarget.Type {
+	switch resolved.Type {
 	case rvfs.TargetResource, rvfs.TargetLink:
-		return n.showResource(resolvedTarget.ResourcePath)
-
+		return n.showResource(resolved.ResourcePath)
 	case rvfs.TargetProperty:
-		n.showProperty(resolvedTarget.Property, 0, false)
-		return nil
+		n.showProperty(resolved.Property, 0, false)
 	}
-
 	return nil
 }
 
@@ -620,7 +602,9 @@ func formatEntry(entry *rvfs.Entry) string {
 	case rvfs.EntrySymlink:
 		return colorCyan.Sprintf("%s@", entry.Name)
 	case rvfs.EntryComplex:
-		return colorPurple.Sprintf("%s*", entry.Name)
+		return colorPurple.Sprintf("%s/", entry.Name)
+	case rvfs.EntryArray:
+		return colorPurple.Sprintf("%s[]", entry.Name)
 	case rvfs.EntryProperty:
 		return colorGreen.Sprint(entry.Name)
 	default:
@@ -662,7 +646,7 @@ func getEntriesSummary(entries []*rvfs.Entry) string {
 			children++
 		case rvfs.EntrySymlink:
 			links++
-		case rvfs.EntryProperty, rvfs.EntryComplex:
+		case rvfs.EntryProperty, rvfs.EntryComplex, rvfs.EntryArray:
 			properties++
 		}
 	}
@@ -888,7 +872,7 @@ func printHelp() {
 rfsh - Redfish Shell Commands:
 
 Navigation:
-  cd <path>       Navigate to resource or property (keeps composite paths)
+  cd <path>       Navigate to resource (follows links)
   open <path>     Navigate and follow links to canonical destination
   pwd             Print working directory
   ls [path]       List entries (short form)
@@ -909,20 +893,18 @@ Control:
   exit/quit       Exit shell
 
 Path Notation:
-  /               Resource path separator (Systems/1/Storage)
-  :               Property path separator (Status:Health)
-  [n]             Array index (Members[0], BootOrder[2])
+  /               Path separator (Systems/1/Status/Health)
+  [n]             Array index (BootOrder[2])
 
 Examples:
   ls              List everything in current resource
   ls Systems      Show Systems entry
   ll Systems      Show Systems formatted content
   ll Status       Show Status formatted (YAML-style)
-  ll Status:Health              Show Status.Health value
+  ll Status/Health              Show Status.Health value
   dump Status                   Show Status as raw JSON
   cd Systems/1                  Navigate to Systems/1
-  cd Links:Drives[0]            Navigate keeping composite path
-  open Links:Drives[0]          Follow link to canonical path
+  cd Links/Drives[0]            Follow link to drive resource
 
 Keyboard Shortcuts:
   Tab             Auto-complete (smart path resolution)

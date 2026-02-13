@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -25,40 +24,6 @@ func captureOutput(f func()) string {
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
 	return buf.String()
-}
-
-// mockVFS creates a minimal VFS for testing
-type mockVFS struct {
-	resources map[string]*rvfs.Resource
-}
-
-func (m *mockVFS) Get(path string) (*rvfs.Resource, error) {
-	if res, ok := m.resources[path]; ok {
-		return res, nil
-	}
-	return nil, fmt.Errorf("not found: %s", path)
-}
-
-func (m *mockVFS) ListAll(path string) ([]*rvfs.Entry, error) {
-	return nil, nil
-}
-
-func (m *mockVFS) ResolveTarget(basePath, targetPath string) (*rvfs.Target, error) {
-	return nil, nil
-}
-
-func (m *mockVFS) GetKnownPaths() []string {
-	return nil
-}
-
-func (m *mockVFS) Clear() {}
-
-func (m *mockVFS) Sync() error {
-	return nil
-}
-
-func (m *mockVFS) Parent(path string) string {
-	return "/redfish/v1"
 }
 
 func TestShowProperty_SimpleValue(t *testing.T) {

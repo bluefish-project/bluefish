@@ -363,7 +363,7 @@ func (a *App) addPropertyObjectChildren(parent *tview.TreeNode, prop *rvfs.Prope
 
 	for _, name := range propNames {
 		child := prop.Children[name]
-		childPath := basePath + ":" + name
+		childPath := basePath + "/" + name
 
 		node := a.createPropertyNode(name, child, childPath, parent)
 		parent.AddChild(node)
