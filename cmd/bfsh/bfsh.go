@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"bluefish/rvfs"
+	"github.com/bluefish-project/bluefish/rvfs"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/chzyer/readline"

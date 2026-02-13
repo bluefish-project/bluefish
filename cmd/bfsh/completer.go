@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"bluefish/rvfs"
+	"github.com/bluefish-project/bluefish/rvfs"
 )
 
 // Completer provides tab completion for the shell

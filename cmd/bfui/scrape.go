@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"bluefish/rvfs"
+	"github.com/bluefish-project/bluefish/rvfs"
 )
 
 // ScrapeModel manages the resource crawl overlay

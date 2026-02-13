@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"bluefish/rvfs"
+	"github.com/bluefish-project/bluefish/rvfs"
 )
 
 // ActionInfo describes a Redfish action on a resource

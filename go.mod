@@ -1,4 +1,4 @@
-module bluefish
+module github.com/bluefish-project/bluefish
 
 go 1.25.1
 

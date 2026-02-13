@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"bluefish/rvfs"
+	"github.com/bluefish-project/bluefish/rvfs"
 )
 
 // DetailsModel manages the details panel with a scrollable viewport

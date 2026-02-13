@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"bluefish/rvfs"
+	"github.com/bluefish-project/bluefish/rvfs"
 )
 
 // TreeItemKind classifies what a tree item represents

@@ -3,7 +3,7 @@ package main
 import (
 	"strings"
 
-	"bluefish/rvfs"
+	"github.com/bluefish-project/bluefish/rvfs"
 )
 
 // CompletionListener preprocesses Tab key presses

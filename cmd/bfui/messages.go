@@ -1,6 +1,6 @@
 package main
 
-import "bluefish/rvfs"
+import "github.com/bluefish-project/bluefish/rvfs"
 
 // ResourceLoadedMsg is sent when an async resource fetch completes
 type ResourceLoadedMsg struct {

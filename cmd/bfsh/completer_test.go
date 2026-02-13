@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"bluefish/rvfs"
+	"github.com/bluefish-project/bluefish/rvfs"
 )
 
 // mockVFSForCompletion provides a minimal VFS for completion testing

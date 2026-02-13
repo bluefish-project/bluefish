@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"bluefish/rvfs"
+	"github.com/bluefish-project/bluefish/rvfs"
 )
 
 // captureOutput captures stdout during function execution
