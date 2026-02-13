@@ -101,7 +101,8 @@ func (d *DetailsModel) renderResource(b *strings.Builder, item *TreeItem) {
 	b.WriteString("\n")
 
 	if len(item.Resource.Children) > 0 {
-		b.WriteString(detailLabelStyle.Render(fmt.Sprintf("Children: %d\n", len(item.Resource.Children))))
+		b.WriteString(detailLabelStyle.Render(fmt.Sprintf("Children: %d", len(item.Resource.Children))))
+		b.WriteString("\n")
 		childNames := sortedKeys(item.Resource.Children)
 		for _, name := range childNames {
 			child := item.Resource.Children[name]
@@ -114,7 +115,8 @@ func (d *DetailsModel) renderResource(b *strings.Builder, item *TreeItem) {
 	}
 
 	if len(item.Resource.Properties) > 0 {
-		b.WriteString(detailLabelStyle.Render("Properties:\n"))
+		b.WriteString(detailLabelStyle.Render("Properties:"))
+		b.WriteString("\n")
 		propNames := make([]string, 0, len(item.Resource.Properties))
 		for n := range item.Resource.Properties {
 			propNames = append(propNames, n)
@@ -160,7 +162,8 @@ func (d *DetailsModel) renderSimple(b *strings.Builder, item *TreeItem) {
 func (d *DetailsModel) renderObject(b *strings.Builder, item *TreeItem) {
 	b.WriteString(detailLabelStyle.Render("Type: "))
 	b.WriteString("Object\n")
-	b.WriteString(detailLabelStyle.Render(fmt.Sprintf("Fields: %d\n\n", item.ChildCount)))
+	b.WriteString(detailLabelStyle.Render(fmt.Sprintf("Fields: %d", item.ChildCount)))
+	b.WriteString("\n\n")
 
 	if item.Property != nil {
 		childNames := make([]string, 0, len(item.Property.Children))
@@ -178,7 +181,8 @@ func (d *DetailsModel) renderObject(b *strings.Builder, item *TreeItem) {
 func (d *DetailsModel) renderArray(b *strings.Builder, item *TreeItem) {
 	b.WriteString(detailLabelStyle.Render("Type: "))
 	b.WriteString("Array\n")
-	b.WriteString(detailLabelStyle.Render(fmt.Sprintf("Elements: %d\n\n", item.ChildCount)))
+	b.WriteString(detailLabelStyle.Render(fmt.Sprintf("Elements: %d", item.ChildCount)))
+	b.WriteString("\n\n")
 
 	if item.Property != nil {
 		for i, elem := range item.Property.Elements {
@@ -205,7 +209,8 @@ func (d *DetailsModel) renderResourceProperties(b *strings.Builder, resource *rv
 	}
 	sort.Strings(propNames)
 
-	b.WriteString(detailLabelStyle.Render("Properties:\n"))
+	b.WriteString(detailLabelStyle.Render("Properties:"))
+	b.WriteString("\n")
 	for _, name := range propNames {
 		prop := resource.Properties[name]
 		d.renderPropertyRecursive(b, name, prop, 1)

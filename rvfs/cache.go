@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+	"time"
 )
 
 // ResourceCache manages resources with transparent fetch-on-miss
@@ -215,6 +216,11 @@ func (c *ResourceCache) Load() error {
 		resource, err := parser.Parse(entry.Path, rawJSON)
 		if err != nil {
 			continue // Skip unparseable entries
+		}
+
+		// Restore original fetch timestamp
+		if t, err := time.Parse(time.RFC3339, entry.FetchedAt); err == nil {
+			resource.FetchedAt = t
 		}
 
 		c.store[entry.Path] = resource

@@ -397,6 +397,10 @@ func (m *mockCache) GetKnownPaths() []string {
 	return paths
 }
 
+func (m *mockCache) Invalidate(path string) {
+	delete(m.resources, path)
+}
+
 func (m *mockCache) Clear() {
 	m.resources = make(map[string]*Resource)
 }

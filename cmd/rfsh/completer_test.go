@@ -71,6 +71,7 @@ func (m *mockVFSForCompletion) GetKnownPaths() []string {
 func (m *mockVFSForCompletion) Post(path string, body []byte) ([]byte, int, error) {
 	return nil, 0, nil
 }
+func (m *mockVFSForCompletion) Invalidate(path string)    {}
 func (m *mockVFSForCompletion) Clear()                    {}
 func (m *mockVFSForCompletion) Sync() error               { return nil }
 func (m *mockVFSForCompletion) Parent(p string) string    { return "/redfish/v1" }
@@ -406,6 +407,7 @@ func (m *mockVFSForComplexCompletion) Post(path string, body []byte) ([]byte, in
 	return nil, 0, nil
 }
 func (m *mockVFSForComplexCompletion) GetKnownPaths() []string   { return nil }
+func (m *mockVFSForComplexCompletion) Invalidate(path string)    {}
 func (m *mockVFSForComplexCompletion) Clear()                    {}
 func (m *mockVFSForComplexCompletion) Sync() error               { return nil }
 func (m *mockVFSForComplexCompletion) Parent(path string) string { return "" }

@@ -435,6 +435,7 @@ func (m *mockVFSForActions) ListProperties(path string) ([]*rvfs.Property, error
 func (m *mockVFSForActions) Join(b, t string) string                              { return "" }
 func (m *mockVFSForActions) Parent(p string) string                               { return "" }
 func (m *mockVFSForActions) GetKnownPaths() []string                              { return nil }
+func (m *mockVFSForActions) Invalidate(path string)                               {}
 func (m *mockVFSForActions) Clear()                                               {}
 func (m *mockVFSForActions) Sync() error                                          { return nil }
 

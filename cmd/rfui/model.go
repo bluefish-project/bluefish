@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,6 +21,8 @@ const (
 	ModeNormal Mode = iota
 	ModeSearch
 	ModeAction
+	ModeHelp
+	ModeScrape
 )
 
 // Model is the root Bubble Tea model
@@ -33,11 +36,13 @@ type Model struct {
 	breadcrumb BreadcrumbModel
 	search     SearchModel
 	action     ActionModel
+	scrape     ScrapeModel
 
-	width, height int
-	mode          Mode
-	statusMsg     string
-	loading       bool
+	width, height    int
+	mode             Mode
+	statusMsg        string
+	loading          bool
+	currentFetchedAt time.Time
 }
 
 // NewModel creates a new root model
@@ -50,6 +55,7 @@ func NewModel(vfs rvfs.VFS) Model {
 		breadcrumb: NewBreadcrumbModel(),
 		search:     NewSearchModel(),
 		action:     NewActionModel(),
+		scrape:     NewScrapeModel(vfs),
 	}
 }
 
@@ -87,6 +93,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.action.SetResult(msg.StatusCode, msg.Body, msg.Err)
 		return m, nil
 
+	case scrapeTickMsg:
+		cmd := m.scrape.HandleTick(msg.Path)
+		return m, cmd
+
+	case scrapeDoneMsg:
+		cmd := m.scrape.HandleDone(msg)
+		return m, cmd
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -107,6 +121,7 @@ func (m Model) handleResourceLoaded(msg ResourceLoadedMsg) (tea.Model, tea.Cmd) 
 		m.recalcLayout()
 		m.statusMsg = ""
 		m.loading = false
+		m.currentFetchedAt = msg.Resource.FetchedAt
 
 		item := m.tree.Current()
 		if item != nil {
@@ -118,6 +133,11 @@ func (m Model) handleResourceLoaded(msg ResourceLoadedMsg) (tea.Model, tea.Cmd) 
 	// Async child load
 	m.tree.HandleResourceLoaded(msg.Path, msg.Resource)
 	m.loading = false
+
+	// Track age of the resource at cursor
+	if msg.Resource != nil {
+		m.currentFetchedAt = msg.Resource.FetchedAt
+	}
 
 	// Update details if cursor is on this item
 	item := m.tree.Current()
@@ -149,6 +169,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSearchKey(msg)
 	case ModeAction:
 		return m.handleActionKey(msg)
+	case ModeHelp:
+		return m.handleHelpKey(msg)
+	case ModeScrape:
+		return m.handleScrapeKey(msg)
 	}
 	return m, nil
 }
@@ -192,10 +216,7 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, normalKeys.Enter):
 		return m.handleEnter()
 
-	case key.Matches(msg, normalKeys.Subtree):
-		return m.handleSubtree()
-
-	case key.Matches(msg, normalKeys.Back), key.Matches(msg, normalKeys.BackAlt):
+	case key.Matches(msg, normalKeys.Back):
 		return m.handleBack()
 
 	case key.Matches(msg, normalKeys.GoUp):
@@ -207,6 +228,9 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, normalKeys.Refresh):
 		return m.handleRefresh()
 
+	case key.Matches(msg, normalKeys.Scrape):
+		return m.handleScrape()
+
 	case key.Matches(msg, normalKeys.ScrollDown):
 		m.details.ScrollDown()
 
@@ -215,11 +239,16 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, normalKeys.Search):
 		m.mode = ModeSearch
+		m.recalcLayout()
 		paths := m.vfs.GetKnownPaths()
 		m.search.Open(paths)
 
 	case key.Matches(msg, normalKeys.Action):
 		return m.handleActionMode()
+
+	case key.Matches(msg, normalKeys.Help):
+		m.mode = ModeHelp
+		m.recalcLayout()
 	}
 
 	return m, nil
@@ -230,12 +259,14 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, searchKeys.Cancel):
 		m.mode = ModeNormal
 		m.search.Close()
+		m.recalcLayout()
 		return m, nil
 
 	case key.Matches(msg, searchKeys.Confirm):
 		path := m.search.Selected()
 		m.mode = ModeNormal
 		m.search.Close()
+		m.recalcLayout()
 		if path != "" {
 			return m.navigateTo(path)
 		}
@@ -262,6 +293,7 @@ func (m Model) handleActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, actionKeys.Cancel):
 			m.mode = ModeNormal
 			m.action.Close()
+			m.recalcLayout()
 		case key.Matches(msg, actionKeys.Up):
 			m.action.MoveUp()
 		case key.Matches(msg, actionKeys.Down):
@@ -276,6 +308,7 @@ func (m Model) handleActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !m.action.BackPhase() {
 				m.mode = ModeNormal
 				m.action.Close()
+				m.recalcLayout()
 			}
 		case key.Matches(msg, actionKeys.Tab):
 			m.action.CycleAllowable()
@@ -294,6 +327,7 @@ func (m Model) handleActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !m.action.BackPhase() {
 				m.mode = ModeNormal
 				m.action.Close()
+				m.recalcLayout()
 			}
 		}
 
@@ -301,40 +335,49 @@ func (m Model) handleActionKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, actionKeys.Cancel) {
 			m.mode = ModeNormal
 			m.action.Close()
+			m.recalcLayout()
 		}
 	}
 
 	return m, nil
 }
 
+func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, overlayKeys.Cancel) {
+		m.mode = ModeNormal
+		m.recalcLayout()
+	}
+	return m, nil
+}
+
+func (m Model) handleScrapeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, overlayKeys.Cancel) {
+		m.mode = ModeNormal
+		m.scrape.Close()
+		m.recalcLayout()
+	}
+	return m, nil
+}
+
+// handleEnter: navigate into the selected item, pushing current root
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	item := m.tree.Current()
 	if item == nil {
 		return m, nil
 	}
 
-	if item.Kind == KindLink {
+	switch item.Kind {
+	case KindLink:
+		m.rootStack = append(m.rootStack, m.basePath)
 		return m.navigateTo(item.LinkTarget)
-	}
-
-	if item.Kind == KindChild {
+	case KindChild, KindResource:
+		m.rootStack = append(m.rootStack, m.basePath)
 		return m.navigateTo(item.Path)
+	default:
+		// For properties, toggle expand/collapse
+		cmd := m.tree.Toggle()
+		return m, cmd
 	}
-
-	// For expandable items, toggle
-	cmd := m.tree.Toggle()
-	return m, cmd
-}
-
-func (m Model) handleSubtree() (tea.Model, tea.Cmd) {
-	item := m.tree.Current()
-	if item == nil {
-		return m, nil
-	}
-
-	// Push current base path
-	m.rootStack = append(m.rootStack, m.basePath)
-	return m.navigateTo(item.Path)
 }
 
 func (m Model) handleBack() (tea.Model, tea.Cmd) {
@@ -368,31 +411,48 @@ func (m Model) handleHome() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleRefresh() (tea.Model, tea.Cmd) {
-	m.vfs.Clear()
-	m.rootStack = nil
-	m.tree = NewTreeModel()
-	m.basePath = rvfs.RedfishRoot
-	m.loading = true
-	m.statusMsg = "Refreshing..."
-	return m, func() tea.Msg {
-		resource, err := m.vfs.Get(m.basePath)
-		return ResourceLoadedMsg{Path: m.basePath, Resource: resource, Err: err}
-	}
-}
-
-func (m Model) handleActionMode() (tea.Model, tea.Cmd) {
-	// Find the resource for the current item
 	item := m.tree.Current()
 	if item == nil {
 		return m, nil
 	}
 
-	// Walk up to find a resource
+	// Only resource-backed items (Child, Resource, Link) can be refreshed
+	path := item.Path
+	switch item.Kind {
+	case KindChild, KindResource:
+		// Refresh this resource
+	case KindLink:
+		path = item.LinkTarget
+	default:
+		m.statusMsg = "Nothing to refresh (select a resource)"
+		return m, nil
+	}
+
+	m.vfs.Invalidate(path)
+	m.statusMsg = fmt.Sprintf("Refreshing %s...", path)
+	return m, func() tea.Msg {
+		resource, err := m.vfs.Get(path)
+		return ResourceLoadedMsg{Path: path, Resource: resource, Err: err}
+	}
+}
+
+func (m Model) handleScrape() (tea.Model, tea.Cmd) {
+	m.mode = ModeScrape
+	m.recalcLayout()
+	cmd := m.scrape.Start(m.basePath)
+	return m, cmd
+}
+
+func (m Model) handleActionMode() (tea.Model, tea.Cmd) {
+	item := m.tree.Current()
+	if item == nil {
+		return m, nil
+	}
+
 	var resource *rvfs.Resource
 	if item.Resource != nil {
 		resource = item.Resource
 	} else {
-		// Use the base path resource
 		res, err := m.vfs.Get(m.basePath)
 		if err != nil {
 			m.statusMsg = fmt.Sprintf("Error: %v", err)
@@ -407,6 +467,7 @@ func (m Model) handleActionMode() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.mode = ModeAction
+	m.recalcLayout()
 	m.action.Open(actions)
 	return m, nil
 }
@@ -441,6 +502,7 @@ func (m Model) navigateTo(path string) (tea.Model, tea.Cmd) {
 	m.tree = NewTreeModel()
 	m.loading = true
 	m.statusMsg = ""
+	m.currentFetchedAt = time.Time{}
 
 	return m, func() tea.Msg {
 		resource, err := m.vfs.Get(path)
@@ -491,6 +553,8 @@ func (m *Model) recalcLayout() {
 		m.search.height = innerH
 		m.action.width = innerW
 		m.action.height = innerH
+		m.scrape.width = innerW
+		m.scrape.height = innerH
 	}
 }
 
@@ -528,19 +592,8 @@ func (m Model) View() string {
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, treePanel, sep, detailsPanel)
 
-	// Composite overlay on top of content if in overlay mode
-	switch m.mode {
-	case ModeSearch:
-		overlay := overlayStyle.
-			Width(m.search.width).
-			Height(m.search.height).
-			Render(m.search.View())
-		content = placeOverlay(m.width, m.tree.height, overlay, content)
-	case ModeAction:
-		overlay := overlayStyle.
-			Width(m.action.width).
-			Height(m.action.height).
-			Render(m.action.View())
+	// Composite overlay on top of content
+	if overlay, ok := m.renderOverlay(); ok {
 		content = placeOverlay(m.width, m.tree.height, overlay, content)
 	}
 
@@ -550,6 +603,35 @@ func (m Model) View() string {
 	sections = append(sections, m.viewHelpBar())
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+// renderOverlay returns the rendered overlay string and true if an overlay is active
+func (m Model) renderOverlay() (string, bool) {
+	var inner string
+	var w, h int
+
+	switch m.mode {
+	case ModeSearch:
+		inner = m.search.View()
+		w, h = m.search.width, m.search.height
+	case ModeAction:
+		inner = m.action.View()
+		w, h = m.action.width, m.action.height
+	case ModeHelp:
+		inner = helpContent()
+		w, h = m.search.width, m.search.height // same overlay size
+	case ModeScrape:
+		inner = m.scrape.View()
+		w, h = m.scrape.width, m.scrape.height
+	default:
+		return "", false
+	}
+
+	rendered := overlayStyle.
+		Width(w).
+		Height(h).
+		Render(inner)
+	return rendered, true
 }
 
 // placeOverlay composites a foreground panel centered on top of a background.
@@ -576,7 +658,6 @@ func placeOverlay(bgWidth, bgHeight int, overlay, background string) string {
 		if row >= len(bgLines) {
 			break
 		}
-		// Build: left padding + overlay line + right padding
 		leftPad := strings.Repeat(" ", startX)
 		rightPad := bgWidth - startX - lipgloss.Width(fgLine)
 		right := ""
@@ -601,7 +682,26 @@ func (m Model) viewStatusBar() string {
 		info = fmt.Sprintf("  Subtree: %s", m.basePath)
 	}
 
-	return title + info
+	var age string
+	if !m.currentFetchedAt.IsZero() {
+		age = "  " + helpDescStyle.Render(formatAge(m.currentFetchedAt))
+	}
+
+	return title + info + age
+}
+
+func formatAge(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 func (m Model) viewHelpBar() string {
@@ -609,13 +709,13 @@ func (m Model) viewHelpBar() string {
 	switch m.mode {
 	case ModeNormal:
 		pairs = []string{
-			"h", "collapse",
-			"j/k", "nav",
-			"l", "expand",
-			"s", "subtree",
+			"enter", "open",
+			"h/j/k/l", "nav",
+			"bs", "back",
 			"/", "search",
 			"!", "action",
-			"q", "quit",
+			"s", "scrape",
+			"?", "help",
 		}
 	case ModeSearch:
 		pairs = []string{
@@ -626,6 +726,10 @@ func (m Model) viewHelpBar() string {
 	case ModeAction:
 		pairs = []string{
 			"esc", "back",
+		}
+	case ModeHelp, ModeScrape:
+		pairs = []string{
+			"esc", "close",
 		}
 	}
 

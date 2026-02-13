@@ -410,16 +410,18 @@ func (t *TreeModel) View() string {
 
 	for i := t.offset; i < end; i++ {
 		item := t.visible[i]
-		line := t.renderItem(item)
 
+		var line string
 		if i == t.cursor {
-			// Pad to full width for highlight
+			// Render plain text with reverse for clean highlight bar
 			plain := t.renderItemPlain(item)
 			padding := t.width - len(plain)
 			if padding < 0 {
 				padding = 0
 			}
-			line = cursorStyle.Render(line + strings.Repeat(" ", padding))
+			line = cursorStyle.Render(plain + strings.Repeat(" ", padding))
+		} else {
+			line = t.renderItem(item)
 		}
 
 		b.WriteString(line)

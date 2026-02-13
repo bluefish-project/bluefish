@@ -138,7 +138,7 @@ Split-pane browser: tree (40%) on the left, scrollable details (60%) on the righ
 │   BiosVersion: "2.1"  │   State: "Enabled"                   │
 │   Assembly → ...      │                                      │
 ├──────────────────────────────────────────────────────────────┤
-│ h:collapse j/k:nav l:expand s:subtree /:search !:action q:q │
+│ enter:open h/j/k/l:nav bs:back /:search !:action ?:help     │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -150,20 +150,25 @@ Split-pane browser: tree (40%) on the left, scrollable details (60%) on the righ
 | `h` | Collapse node, or move to parent |
 | `l` | Expand node |
 | `Space` | Toggle expand/collapse |
-| `Enter` | Follow link or expand |
-| `s` | Rebase tree on current node (subtree) |
-| `b` / `Backspace` | Pop back to previous view |
+| `Enter` | Open: rebase tree on child/link |
+| `Backspace` | Back to previous root |
 | `u` | Go up to parent resource |
 | `~` | Go to root |
 | `r` | Refresh (clear cache, re-fetch) |
+| `s` | Scrape (crawl uncached resources) |
 | `J` / `K` | Scroll details panel |
-| `/` | Open search overlay |
-| `!` | Open action overlay |
+| `/` | Search overlay |
+| `!` | Action overlay |
+| `?` | Help overlay (all bindings) |
 | `q` | Quit |
 
 ### Search Overlay (`/`)
 
 Fuzzy subsequence search over all cached resource paths. Type to filter, `Ctrl+j`/`Ctrl+k` to navigate results, `Enter` to jump, `Escape` to cancel.
+
+### Scrape (`s`)
+
+Crawls all reachable resources from the current root, fetching anything not already in the cache. Shows a progress bar and error count in a modal. Useful for populating the cache before using search.
 
 ### Action Overlay (`!`)
 
@@ -228,6 +233,8 @@ cmd/
     breadcrumb.go     Path segment bar
     search.go         Fuzzy search overlay
     actions.go        Action discovery and POST workflow
+    scrape.go         Resource crawler with progress bar
+    help.go           Help modal content
     keys.go           Mode-sensitive key bindings
     styles.go         Lip Gloss style definitions
     messages.go       tea.Msg types

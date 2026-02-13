@@ -27,6 +27,7 @@ type VFS interface {
 
 	// Cache management
 	GetKnownPaths() []string
+	Invalidate(path string)
 	Clear()
 	Sync() error
 }
@@ -36,6 +37,7 @@ type cache interface {
 	Get(path string) (*Resource, error)
 	Post(path string, body []byte) ([]byte, int, error)
 	GetKnownPaths() []string
+	Invalidate(path string)
 	Clear()
 	Save() error
 }
@@ -339,6 +341,11 @@ func (v *vfs) Parent(p string) string {
 // GetKnownPaths returns all cached paths
 func (v *vfs) GetKnownPaths() []string {
 	return v.cache.GetKnownPaths()
+}
+
+// Invalidate removes a single resource from cache, forcing re-fetch on next Get
+func (v *vfs) Invalidate(path string) {
+	v.cache.Invalidate(path)
 }
 
 // Clear removes all cached resources
