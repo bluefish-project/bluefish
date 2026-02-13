@@ -1,0 +1,1004 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+
+	"bluefish/rvfs"
+
+	"github.com/chzyer/readline"
+	"github.com/fatih/color"
+	"golang.org/x/term"
+	"gopkg.in/yaml.v3"
+)
+
+// Colors for output
+var (
+	colorCyan     = color.New(color.FgCyan)
+	colorGreen    = color.New(color.FgGreen)
+	colorRed      = color.New(color.FgRed)
+	colorPurple   = color.New(color.FgMagenta)
+	colorMagenta  = color.New(color.FgMagenta)
+	colorYellow   = color.New(color.FgYellow)
+	colorBlue     = color.New(color.FgBlue)
+	colorWhite    = color.New(color.FgWhite)
+	colorBold     = color.New(color.Bold)
+	colorBoldBlue = color.New(color.FgBlue, color.Bold)
+)
+
+// Config holds connection configuration
+type Config struct {
+	Endpoint string `yaml:"endpoint"`
+	User     string `yaml:"user"`
+	Pass     string `yaml:"pass"`
+	Insecure bool   `yaml:"insecure"`
+}
+
+// loadConfig reads configuration from a YAML file
+func loadConfig(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	if cfg.Endpoint == "" {
+		return nil, fmt.Errorf("config missing required field: endpoint")
+	}
+	if cfg.User == "" {
+		return nil, fmt.Errorf("config missing required field: user")
+	}
+	if cfg.Pass == "" {
+		return nil, fmt.Errorf("config missing required field: pass")
+	}
+
+	return &cfg, nil
+}
+
+// Navigator manages shell state
+type Navigator struct {
+	vfs      rvfs.VFS
+	cwd      string
+	flatView bool
+}
+
+// NewNavigator creates a navigator
+func NewNavigator(vfs rvfs.VFS) *Navigator {
+	return &Navigator{
+		vfs: vfs,
+		cwd: "/redfish/v1",
+	}
+}
+
+// cd changes directory
+func (n *Navigator) cd(target string) error {
+	if target == "" || target == "~" {
+		n.cwd = "/redfish/v1"
+		entries, _ := n.vfs.ListAll(n.cwd)
+		summary := getEntriesSummary(entries)
+		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		return nil
+	}
+
+	// Special case for current directory
+	if target == "." {
+		entries, _ := n.vfs.ListAll(n.cwd)
+		summary := getEntriesSummary(entries)
+		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		return nil
+	}
+
+	// Special case for parent
+	if target == ".." {
+		n.cwd = n.vfs.Parent(n.cwd)
+		entries, _ := n.vfs.ListAll(n.cwd)
+		summary := getEntriesSummary(entries)
+		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		return nil
+	}
+
+	// Resolve the target
+	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
+	if err != nil {
+		return err
+	}
+
+	switch resolvedTarget.Type {
+	case rvfs.TargetResource:
+		// Navigate to the resource - use the actual resource path
+		n.cwd = resolvedTarget.ResourcePath
+		entries, _ := n.vfs.ListAll(n.cwd)
+		summary := getEntriesSummary(entries)
+		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		return nil
+
+	case rvfs.TargetLink:
+		// For links, keep the composite path we navigated through
+		if strings.HasPrefix(target, "/") {
+			// Absolute path - use as-is (might be composite like /redfish/v1/Oem:Ami:Configurations)
+			n.cwd = strings.TrimRight(target, "/")
+		} else {
+			// Relative path - append to current directory
+			n.cwd = n.vfs.Join(n.cwd, target)
+		}
+		entries, _ := n.vfs.ListAll(n.cwd)
+		summary := getEntriesSummary(entries)
+		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		return nil
+
+	case rvfs.TargetProperty:
+		return fmt.Errorf("cannot cd to property: %s", target)
+	}
+
+	return nil
+}
+
+// open follows links to their canonical destinations (always canonicalizes PropertyLinks)
+func (n *Navigator) open(target string) error {
+	if target == "" {
+		return fmt.Errorf("open requires a target path")
+	}
+
+	// Special case: "open ." canonicalizes the current composite path
+	if target == "." {
+		// Resolve current path to get its canonical resource path
+		resolvedTarget, err := n.vfs.ResolveTarget(rvfs.RedfishRoot, n.cwd)
+		if err != nil {
+			return err
+		}
+
+		// Navigate to the canonical path
+		n.cwd = resolvedTarget.ResourcePath
+		entries, _ := n.vfs.ListAll(n.cwd)
+		summary := getEntriesSummary(entries)
+		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		return nil
+	}
+
+	// Resolve the target
+	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
+	if err != nil {
+		return err
+	}
+
+	switch resolvedTarget.Type {
+	case rvfs.TargetResource:
+		// Already a resource - navigate to it
+		n.cwd = resolvedTarget.ResourcePath
+		entries, _ := n.vfs.ListAll(n.cwd)
+		summary := getEntriesSummary(entries)
+		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		return nil
+
+	case rvfs.TargetLink:
+		// Follow the link to its canonical destination
+		n.cwd = resolvedTarget.ResourcePath
+		entries, _ := n.vfs.ListAll(n.cwd)
+		summary := getEntriesSummary(entries)
+		fmt.Printf("%s  (%s)\n", n.cwd, summary)
+		return nil
+
+	case rvfs.TargetProperty:
+		return fmt.Errorf("cannot open property: %s", target)
+	}
+
+	return nil
+}
+
+// ls lists all entries (children + properties)
+func (n *Navigator) ls(target string) error {
+	// Handle . as current directory
+	if target == "." {
+		target = ""
+	}
+
+	if target == "" {
+		// No target, list current resource
+		entries, err := n.vfs.ListAll(n.cwd)
+		if err != nil {
+			return err
+		}
+		n.printShortListingAll(entries)
+		return nil
+	}
+
+	// Resolve the target
+	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
+	if err != nil {
+		return err
+	}
+
+	switch resolvedTarget.Type {
+	case rvfs.TargetResource, rvfs.TargetLink:
+		// List the resource contents (following links like ll does)
+		entries, err := n.vfs.ListAll(resolvedTarget.ResourcePath)
+		if err != nil {
+			return err
+		}
+		n.printShortListingAll(entries)
+		return nil
+
+	case rvfs.TargetProperty:
+		// Show the property itself as a single entry
+		entry := n.createEntryFromTarget(target, resolvedTarget)
+		n.printShortListingAll([]*rvfs.Entry{entry})
+		return nil
+	}
+
+	return nil
+}
+
+// createEntryFromTarget creates an Entry from a resolved Target
+func (n *Navigator) createEntryFromTarget(name string, target *rvfs.Target) *rvfs.Entry {
+	entry := &rvfs.Entry{Name: name}
+
+	switch target.Type {
+	case rvfs.TargetResource:
+		entry.Type = rvfs.EntryLink
+		entry.Path = target.ResourcePath
+
+	case rvfs.TargetLink:
+		entry.Type = rvfs.EntrySymlink
+		entry.Path = target.ResourcePath
+
+	case rvfs.TargetProperty:
+		switch target.Property.Type {
+		case rvfs.PropertySimple:
+			entry.Type = rvfs.EntryProperty
+		case rvfs.PropertyLink:
+			entry.Type = rvfs.EntrySymlink
+			entry.Path = target.Property.LinkTarget
+		default:
+			entry.Type = rvfs.EntryComplex
+		}
+	}
+
+	return entry
+}
+
+// dump displays raw JSON
+func (n *Navigator) dump(target string) error {
+	if target == "" {
+		// Dump current resource
+		resource, err := n.vfs.Get(n.cwd)
+		if err != nil {
+			return err
+		}
+		var buf bytes.Buffer
+		json.Indent(&buf, resource.RawJSON, "", "  ")
+		fmt.Println(buf.String())
+		return nil
+	}
+
+	// Resolve the target
+	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
+	if err != nil {
+		return err
+	}
+
+	switch resolvedTarget.Type {
+	case rvfs.TargetResource, rvfs.TargetLink:
+		var buf bytes.Buffer
+		json.Indent(&buf, resolvedTarget.Resource.RawJSON, "", "  ")
+		fmt.Println(buf.String())
+
+	case rvfs.TargetProperty:
+		var buf bytes.Buffer
+		json.Indent(&buf, resolvedTarget.Property.RawJSON, "", "  ")
+		fmt.Println(buf.String())
+	}
+
+	return nil
+}
+
+// ll displays formatted content using parsed structure
+func (n *Navigator) ll(target string) error {
+	// Handle . as current directory
+	if target == "." {
+		target = ""
+	}
+
+	if target == "" {
+		// List current resource - show formatted summary
+		return n.showResource(n.cwd)
+	}
+
+	// Resolve the target
+	resolvedTarget, err := n.vfs.ResolveTarget(n.cwd, target)
+	if err != nil {
+		return err
+	}
+
+	switch resolvedTarget.Type {
+	case rvfs.TargetResource, rvfs.TargetLink:
+		return n.showResource(resolvedTarget.ResourcePath)
+
+	case rvfs.TargetProperty:
+		n.showProperty(resolvedTarget.Property, 0, false)
+		return nil
+	}
+
+	return nil
+}
+
+// showResource displays a resource in formatted style
+func (n *Navigator) showResource(path string) error {
+	resource, err := n.vfs.Get(path)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println(colorBold.Sprint(path))
+	if resource.ODataType != "" {
+		fmt.Printf("Type: %s\n", resource.ODataType)
+	}
+
+	// Show properties (sorted for deterministic output)
+	if len(resource.Properties) > 0 {
+		fmt.Println("\nProperties:")
+
+		// Sort property names
+		propNames := make([]string, 0, len(resource.Properties))
+		for name := range resource.Properties {
+			propNames = append(propNames, name)
+		}
+		sort.Strings(propNames)
+
+		for _, name := range propNames {
+			prop := resource.Properties[name]
+			n.showProperty(prop, 2, false)
+		}
+	}
+
+	// Show children (sorted for deterministic output)
+	if len(resource.Children) > 0 {
+		fmt.Println("\nChildren:")
+
+		// Sort child names
+		childNames := make([]string, 0, len(resource.Children))
+		for name := range resource.Children {
+			childNames = append(childNames, name)
+		}
+		sort.Strings(childNames)
+
+		for _, name := range childNames {
+			child := resource.Children[name]
+			if child.Type == rvfs.ChildLink {
+				fmt.Printf("  %s → %s\n", colorBoldBlue.Sprintf("%s/", name), child.Target)
+			} else {
+				fmt.Printf("  %s → %s\n", colorCyan.Sprintf("%s@", name), child.Target)
+			}
+		}
+	}
+
+	return nil
+}
+
+// showProperty displays a property in formatted style with indentation (YAML-style)
+// indent is the indentation level for this property itself
+// isArrayElement indicates this property is the first field of an array element object (suppress indent)
+func (n *Navigator) showProperty(prop *rvfs.Property, indent int, isArrayElement bool) {
+	var propertyIndent string
+	if isArrayElement {
+		propertyIndent = "" // No indent for first field of array element (inline with dash)
+	} else {
+		propertyIndent = strings.Repeat(" ", indent)
+	}
+	childIndent := strings.Repeat(" ", indent+2)
+
+	switch prop.Type {
+	case rvfs.PropertySimple:
+		// Print property name and simple value inline
+		fmt.Printf("%s%s: %s\n", propertyIndent, colorGreen.Sprint(prop.Name), formatSimpleValue(prop.Value))
+
+	case rvfs.PropertyLink:
+		// Print property name and link target
+		fmt.Printf("%s%s: %s → %s\n", propertyIndent, colorGreen.Sprint(prop.Name), colorCyan.Sprint("link"), prop.LinkTarget)
+
+	case rvfs.PropertyObject:
+		// Print property name
+		fmt.Printf("%s%s:", propertyIndent, colorGreen.Sprint(prop.Name))
+
+		// Object - show nested fields with indentation (YAML-style)
+		if len(prop.Children) == 0 {
+			// Empty object
+			fmt.Println(" {}")
+		} else {
+			// Print leading newline
+			fmt.Println()
+
+			// Sort keys for deterministic output
+			keys := make([]string, 0, len(prop.Children))
+			for name := range prop.Children {
+				keys = append(keys, name)
+			}
+			sort.Strings(keys)
+
+			// Print fields
+			for _, name := range keys {
+				child := prop.Children[name]
+				n.showProperty(child, indent+2, false)
+			}
+		}
+
+	case rvfs.PropertyArray:
+		// Print property name
+		fmt.Printf("%s%s:", propertyIndent, colorGreen.Sprint(prop.Name))
+
+		// Array - show elements with YAML-style list markers
+		if len(prop.Elements) == 0 {
+			// Empty array
+			fmt.Println(" []")
+		} else {
+			fmt.Println()
+			// Print each element with dash marker
+			for _, elem := range prop.Elements {
+				// For array elements, we need special handling for objects
+				if elem.Type == rvfs.PropertyObject && len(elem.Children) > 0 {
+					// Print dash at child indent level
+					fmt.Printf("%s- ", childIndent)
+
+					// Print first field inline with dash, rest indented
+					keys := make([]string, 0, len(elem.Children))
+					for name := range elem.Children {
+						keys = append(keys, name)
+					}
+					sort.Strings(keys)
+
+					for i, name := range keys {
+						child := elem.Children[name]
+						if i == 0 {
+							// First field inline with dash (at childIndent level, but suppress indent)
+							n.showProperty(child, indent+4, true)
+						} else {
+							// Subsequent fields indented to align with first field
+							n.showProperty(child, indent+4, false)
+						}
+					}
+				} else {
+					// Simple element or empty object - show inline
+					fmt.Printf("%s- ", childIndent)
+					switch elem.Type {
+					case rvfs.PropertySimple:
+						fmt.Println(formatSimpleValue(elem.Value))
+					case rvfs.PropertyObject:
+						fmt.Println("{}")
+					case rvfs.PropertyLink:
+						fmt.Printf("%s → %s\n", colorCyan.Sprint("link"), elem.LinkTarget)
+					}
+				}
+			}
+		}
+	}
+}
+
+// formatSimpleValue formats a simple property value
+func formatSimpleValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case bool:
+		return fmt.Sprintf("%v", v)
+	case float64:
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v))
+		}
+		return fmt.Sprintf("%g", v)
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// tree displays tree view
+func (n *Navigator) tree(depth int) error {
+	output := n.buildTree(n.cwd, "", depth, 0)
+	if output == "" {
+		fmt.Println("(empty)")
+	} else {
+		fmt.Println(output)
+	}
+	return nil
+}
+
+func (n *Navigator) buildTree(path, prefix string, maxDepth, currentDepth int) string {
+	if currentDepth >= maxDepth {
+		return ""
+	}
+
+	entries, err := n.vfs.ListAll(path)
+	if err != nil {
+		return ""
+	}
+
+	var lines []string
+	for i, entry := range entries {
+		isLast := i == len(entries)-1
+
+		connector := "├── "
+		if isLast {
+			connector = "└── "
+		}
+
+		line := prefix + connector + formatEntry(entry)
+		lines = append(lines, line)
+
+		// Recurse for directories
+		if entry.IsDir() && currentDepth+1 < maxDepth {
+			extension := "│   "
+			if isLast {
+				extension = "    "
+			}
+			subtree := n.buildTree(entry.Path, prefix+extension, maxDepth, currentDepth+1)
+			if subtree != "" {
+				lines = append(lines, subtree)
+			}
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// find searches for properties
+func (n *Navigator) find(pattern string) error {
+	re, err := regexp.Compile("(?i)" + pattern)
+	if err != nil {
+		return fmt.Errorf("invalid pattern: %v", err)
+	}
+
+	var results []string
+	n.findRecursive(n.cwd, "", re, &results, 0)
+
+	if len(results) == 0 {
+		fmt.Printf("No matches found for '%s'\n", pattern)
+	} else {
+		for _, result := range results {
+			fmt.Println(result)
+		}
+	}
+
+	return nil
+}
+
+func (n *Navigator) findRecursive(path, prefix string, re *regexp.Regexp, results *[]string, depth int) {
+	if depth > 5 {
+		return
+	}
+
+	properties, err := n.vfs.ListProperties(path)
+	if err != nil {
+		return
+	}
+
+	for _, prop := range properties {
+		fullPath := prop.Name
+		if prefix != "" {
+			fullPath = prefix + "." + prop.Name
+		}
+
+		if re.MatchString(prop.Name) {
+			*results = append(*results,
+				fmt.Sprintf("%s = %s",
+					colorYellow.Sprint(fullPath),
+					formatPropertyValue(prop)))
+		}
+	}
+}
+
+// Display formatting
+
+func (n *Navigator) printShortListingAll(entries []*rvfs.Entry) {
+	if len(entries) == 0 {
+		fmt.Println("(empty)")
+		return
+	}
+
+	items := make([]string, len(entries))
+	for i, entry := range entries {
+		items[i] = formatEntry(entry)
+	}
+
+	fmt.Println(formatColumns(items))
+}
+
+func formatEntry(entry *rvfs.Entry) string {
+	switch entry.Type {
+	case rvfs.EntryLink:
+		return colorBoldBlue.Sprintf("%s/", entry.Name)
+	case rvfs.EntrySymlink:
+		return colorCyan.Sprintf("%s@", entry.Name)
+	case rvfs.EntryComplex:
+		return colorPurple.Sprintf("%s*", entry.Name)
+	case rvfs.EntryProperty:
+		return colorGreen.Sprint(entry.Name)
+	default:
+		return entry.Name
+	}
+}
+
+func formatPropertyValue(prop *rvfs.Property) string {
+	switch v := prop.Value.(type) {
+	case string:
+		if len(v) > 60 {
+			return v[:57] + "..."
+		}
+		return v
+	case bool:
+		return fmt.Sprintf("%v", v)
+	case float64:
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v))
+		}
+		return fmt.Sprintf("%g", v)
+	case nil:
+		return "null"
+	case []byte:
+		return "{...}"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func getEntriesSummary(entries []*rvfs.Entry) string {
+	children := 0
+	links := 0
+	properties := 0
+
+	for _, entry := range entries {
+		switch entry.Type {
+		case rvfs.EntryLink:
+			children++
+		case rvfs.EntrySymlink:
+			links++
+		case rvfs.EntryProperty, rvfs.EntryComplex:
+			properties++
+		}
+	}
+
+	var parts []string
+	if children > 0 {
+		parts = append(parts, fmt.Sprintf("%d children", children))
+	}
+	if links > 0 {
+		parts = append(parts, fmt.Sprintf("%d links", links))
+	}
+	if properties > 0 {
+		parts = append(parts, fmt.Sprintf("%d props", properties))
+	}
+
+	if len(parts) == 0 {
+		return "empty"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func main() {
+	// Parse arguments: config file only
+	if len(os.Args) != 2 {
+		fmt.Println("Usage: rfsh CONFIG_FILE")
+		fmt.Println("Example: rfsh config.yaml")
+		os.Exit(1)
+	}
+
+	configPath := os.Args[1]
+
+	// Check if it's a YAML file
+	if !strings.HasSuffix(configPath, ".yaml") && !strings.HasSuffix(configPath, ".yml") {
+		fmt.Println("Usage: rfsh CONFIG_FILE")
+		fmt.Println("Example: rfsh config.yaml")
+		os.Exit(1)
+	}
+
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	endpoint := cfg.Endpoint
+	username := cfg.User
+	password := cfg.Pass
+	insecure := cfg.Insecure
+
+	// Create VFS
+	fmt.Printf("Connecting to %s...\n", endpoint)
+	vfs, err := rvfs.NewVFS(endpoint, username, password, insecure)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer vfs.Sync()
+
+	// Create navigator
+	nav := NewNavigator(vfs)
+
+	// Show initial status
+	entries, _ := vfs.ListAll(nav.cwd)
+	summary := getEntriesSummary(entries)
+	fmt.Printf("%s  (%s)\n", nav.cwd, summary)
+	fmt.Println("Type 'help' for commands")
+
+	// Setup readline with completion preprocessing
+	completer := NewCompleter(nav)
+	listener := NewCompletionListener(nav)
+
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:            getPrompt(nav),
+		HistoryFile:       os.ExpandEnv("$HOME/.rfsh_history"),
+		AutoComplete:      completer,
+		Listener:          listener,
+		InterruptPrompt:   "^C",
+		EOFPrompt:         "exit",
+		HistorySearchFold: true,
+		HistoryLimit:      1000,
+	})
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer rl.Close()
+
+	// REPL loop
+	for {
+		rl.SetPrompt(getPrompt(nav))
+
+		line, err := rl.Readline()
+		if err != nil {
+			break
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Parse command
+		parts := strings.Fields(line)
+		cmd := parts[0]
+		args := parts[1:]
+
+		// Execute command
+		if err := executeCommand(nav, cmd, args); err != nil {
+			fmt.Printf("Error: %v\n", err)
+		}
+
+		if cmd == "exit" || cmd == "quit" || cmd == "q" {
+			break
+		}
+	}
+}
+
+func getPrompt(nav *Navigator) string {
+	mode := ""
+	if nav.flatView {
+		mode = " [flat]"
+	}
+	return fmt.Sprintf("%s%s> ", colorBoldBlue.Sprint(nav.cwd), mode)
+}
+
+func executeCommand(nav *Navigator, cmd string, args []string) error {
+	switch cmd {
+	case "cd":
+		target := ""
+		if len(args) > 0 {
+			target = args[0]
+		}
+		return nav.cd(target)
+
+	case "open":
+		if len(args) == 0 {
+			return fmt.Errorf("usage: open <path>")
+		}
+		return nav.open(args[0])
+
+	case "ls":
+		target := ""
+		if len(args) > 0 {
+			target = strings.Join(args, " ")
+		}
+		return nav.ls(target)
+
+	case "ll":
+		target := ""
+		if len(args) > 0 {
+			target = strings.Join(args, " ")
+		}
+		return nav.ll(target)
+
+	case "pwd":
+		fmt.Println(nav.cwd)
+
+	case "dump":
+		target := ""
+		if len(args) > 0 {
+			target = strings.Join(args, " ")
+		}
+		return nav.dump(target)
+
+	case "tree":
+		depth := 2
+		if len(args) > 0 {
+			if d, err := strconv.Atoi(args[0]); err == nil {
+				depth = d
+			}
+		}
+		return nav.tree(depth)
+
+	case "find":
+		if len(args) == 0 {
+			return fmt.Errorf("usage: find <pattern>")
+		}
+		return nav.find(args[0])
+
+	case "flat":
+		nav.flatView = !nav.flatView
+		mode := "disabled"
+		if nav.flatView {
+			mode = "enabled"
+		}
+		fmt.Printf("Flat view %s\n", mode)
+		return nav.ls("")
+
+	case "cache":
+		if len(args) == 0 {
+			paths := nav.vfs.GetKnownPaths()
+			fmt.Printf("Cache: %d resources\n", len(paths))
+		} else if args[0] == "clear" {
+			nav.vfs.Clear()
+			fmt.Println("Cache cleared")
+		} else if args[0] == "list" {
+			paths := nav.vfs.GetKnownPaths()
+			sort.Strings(paths)
+			for _, path := range paths {
+				fmt.Println(path)
+			}
+		}
+
+	case "clear":
+		fmt.Print("\033[H\033[2J")
+
+	case "help", "?":
+		printHelp()
+
+	case "exit", "quit", "q":
+		// Handled in main loop
+		return nil
+
+	default:
+		return fmt.Errorf("unknown command: %s (type 'help' for commands)", cmd)
+	}
+
+	return nil
+}
+
+func printHelp() {
+	fmt.Print(`
+rfsh - Redfish Shell Commands:
+
+Navigation:
+  cd <path>       Navigate to resource or property (keeps composite paths)
+  open <path>     Navigate and follow links to canonical destination
+  pwd             Print working directory
+  ls [path]       List entries (short form)
+  ll [path]       Show formatted content (long form, YAML-style)
+
+Viewing:
+  dump [path]     Show raw JSON
+  tree [depth]    Show tree view (default: 2)
+  find <pattern>  Search for properties
+
+Settings:
+  flat            Toggle flat property view
+  clear           Clear screen
+  cache [cmd]     Manage cache (clear, list)
+
+Control:
+  help            Show help
+  exit/quit       Exit shell
+
+Path Notation:
+  /               Resource path separator (Systems/1/Storage)
+  :               Property path separator (Status:Health)
+  [n]             Array index (Members[0], BootOrder[2])
+
+Examples:
+  ls              List everything in current resource
+  ls Systems      Show Systems entry
+  ll Systems      Show Systems formatted content
+  ll Status       Show Status formatted (YAML-style)
+  ll Status:Health              Show Status.Health value
+  dump Status                   Show Status as raw JSON
+  cd Systems/1                  Navigate to Systems/1
+  cd Links:Drives[0]            Navigate keeping composite path
+  open Links:Drives[0]          Follow link to canonical path
+
+Keyboard Shortcuts:
+  Tab             Auto-complete (smart path resolution)
+  Tab Tab         Show all completions
+  Ctrl+R          Reverse history search
+  Ctrl+L          Clear screen
+  Ctrl+A/E        Start/End of line
+  ↑/↓             History (folded)
+
+Display Symbols:
+  blue/           Child resource (navigable)
+  cyan@           External link (symlink)
+  green           Simple property
+  purple*         Complex property (object/array)
+`)
+}
+
+// formatColumns formats items in columns like ls
+func formatColumns(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+
+	// Get terminal width
+	width := 100 // default
+	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
+		if w, _, err := term.GetSize(fd); err == nil {
+			width = w
+		}
+	}
+
+	// Calculate column width (accounting for ANSI codes)
+	maxLen := 0
+	for _, item := range items {
+		stripped := stripAnsi(item)
+		if len(stripped) > maxLen {
+			maxLen = len(stripped)
+		}
+	}
+
+	colWidth := maxLen + 2
+	numCols := width / colWidth
+	if numCols < 1 {
+		numCols = 1
+	}
+
+	// Format in columns
+	var result strings.Builder
+	for i, item := range items {
+		result.WriteString(item)
+		if (i+1)%numCols == 0 {
+			result.WriteString("\n")
+		} else if i < len(items)-1 {
+			stripped := stripAnsi(item)
+			padding := colWidth - len(stripped)
+			result.WriteString(strings.Repeat(" ", padding))
+		}
+	}
+
+	return result.String()
+}
+
+// stripAnsi removes ANSI escape codes from text
+func stripAnsi(text string) string {
+	var result strings.Builder
+	inCode := false
+	for _, ch := range text {
+		if ch == '\033' {
+			inCode = true
+		} else if inCode {
+			if ch == 'm' {
+				inCode = false
+			}
+		} else {
+			result.WriteRune(ch)
+		}
+	}
+	return result.String()
+}
