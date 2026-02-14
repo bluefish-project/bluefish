@@ -90,7 +90,8 @@ func (v *vfs) ResolveTarget(basePath, targetPath string) (*Target, error) {
 	}
 
 	// Relative path - join with base and resolve from root
-	return v.resolveAbsolute(basePath + "/" + targetPath)
+	// path.Join resolves .., . segments and strips trailing slashes
+	return v.resolveAbsolute(normalizePath(path.Join(basePath, targetPath)))
 }
 
 // resolveAbsolute resolves an absolute path like /redfish/v1/Systems/1/Status:Health
@@ -356,4 +357,9 @@ func (v *vfs) Clear() {
 // Sync saves cache to disk
 func (v *vfs) Sync() error {
 	return v.cache.Save()
+}
+
+// BaseName returns the last segment of a path, trimming trailing slashes
+func BaseName(p string) string {
+	return path.Base(strings.TrimRight(p, "/"))
 }

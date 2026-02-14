@@ -547,6 +547,48 @@ func TestVFS_PathResolution(t *testing.T) {
 			t.Errorf("ResourcePath = %q, want %q", target.ResourcePath, "/redfish/v1/Systems/1")
 		}
 	})
+
+	t.Run("dotdot with trailing slash", func(t *testing.T) {
+		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "../")
+		if err != nil {
+			t.Fatalf("ResolveTarget failed: %v", err)
+		}
+
+		if target.Type != TargetResource {
+			t.Errorf("Type = %v, want TargetResource", target.Type)
+		}
+		if target.ResourcePath != "/redfish/v1/Systems" {
+			t.Errorf("ResourcePath = %q, want %q", target.ResourcePath, "/redfish/v1/Systems")
+		}
+	})
+
+	t.Run("dot resolves to current", func(t *testing.T) {
+		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", ".")
+		if err != nil {
+			t.Fatalf("ResolveTarget failed: %v", err)
+		}
+
+		if target.Type != TargetResource {
+			t.Errorf("Type = %v, want TargetResource", target.Type)
+		}
+		if target.ResourcePath != "/redfish/v1/Systems/1" {
+			t.Errorf("ResourcePath = %q, want %q", target.ResourcePath, "/redfish/v1/Systems/1")
+		}
+	})
+
+	t.Run("dotdot compound path", func(t *testing.T) {
+		target, err := vfs.ResolveTarget("/redfish/v1/Systems/1", "../1/Status/Health")
+		if err != nil {
+			t.Fatalf("ResolveTarget failed: %v", err)
+		}
+
+		if target.Type != TargetProperty {
+			t.Errorf("Type = %v, want TargetProperty", target.Type)
+		}
+		if target.Property.Value != "OK" {
+			t.Errorf("Property value = %v, want OK", target.Property.Value)
+		}
+	})
 }
 
 // TestVFS_ListOperations tests list operations
@@ -615,6 +657,10 @@ func TestVFS_PathUtilities(t *testing.T) {
 			{"/redfish/v1", "Systems", "/redfish/v1/Systems"},
 			{"/redfish/v1/Systems", "1", "/redfish/v1/Systems/1"},
 			{"/redfish/v1/", "Systems/", "/redfish/v1/Systems"},
+			{"/redfish/v1/Systems/1", "..", "/redfish/v1/Systems"},
+			{"/redfish/v1/Systems/1", "../", "/redfish/v1/Systems"},
+			{"/redfish/v1/Systems/1", ".", "/redfish/v1/Systems/1"},
+			{"/redfish/v1/Systems/1", "../1/Status", "/redfish/v1/Systems/1/Status"},
 		}
 
 		for _, tt := range tests {
@@ -638,6 +684,25 @@ func TestVFS_PathUtilities(t *testing.T) {
 			got := vfs.Parent(tt.path)
 			if got != tt.want {
 				t.Errorf("Parent(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		}
+	})
+
+	t.Run("BaseName", func(t *testing.T) {
+		tests := []struct {
+			path, want string
+		}{
+			{"/redfish/v1/Systems/1", "1"},
+			{"/redfish/v1/Systems", "Systems"},
+			{"/redfish/v1/Systems/", "Systems"},
+			{"/redfish/v1", "v1"},
+			{"/", "."},
+		}
+
+		for _, tt := range tests {
+			got := BaseName(tt.path)
+			if got != tt.want {
+				t.Errorf("BaseName(%q) = %q, want %q", tt.path, got, tt.want)
 			}
 		}
 	})

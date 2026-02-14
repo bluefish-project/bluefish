@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/bluefish-project/bluefish/rvfs"
 )
@@ -461,7 +462,7 @@ func (m Model) handleActionMode() (tea.Model, tea.Cmd) {
 		resource = res
 	}
 
-	actions := discoverActions(resource)
+	actions := discoverActions(m.vfs, resource)
 	if len(actions) == 0 {
 		m.statusMsg = "No actions on current resource"
 		return m, nil
@@ -609,6 +610,7 @@ func (m Model) View() string {
 func (m Model) renderOverlay() (string, bool) {
 	var inner string
 	var w, h int
+	fixedHeight := false
 
 	switch m.mode {
 	case ModeSearch:
@@ -619,7 +621,8 @@ func (m Model) renderOverlay() (string, bool) {
 		w, h = m.action.width, m.action.height
 	case ModeHelp:
 		inner = helpContent()
-		w, h = m.search.width, m.search.height // same overlay size
+		w, h = m.search.width, m.search.height
+		fixedHeight = true
 	case ModeScrape:
 		inner = m.scrape.View()
 		w, h = m.scrape.width, m.scrape.height
@@ -627,15 +630,17 @@ func (m Model) renderOverlay() (string, bool) {
 		return "", false
 	}
 
-	rendered := overlayStyle.
-		Width(w).
-		MaxHeight(h).
-		Render(inner)
-	return rendered, true
+	s := overlayStyle.Width(w)
+	if fixedHeight {
+		s = s.Height(h)
+	} else {
+		s = s.MaxHeight(h)
+	}
+	return s.Render(inner), true
 }
 
-// placeOverlay composites a foreground panel centered on top of a background.
-// The overlay replaces background lines — it is fully opaque.
+// placeOverlay composites a foreground panel centered on top of a background,
+// preserving background content to the left and right of the overlay.
 func placeOverlay(bgWidth, bgHeight int, overlay, background string) string {
 	bgLines := strings.Split(background, "\n")
 	fgLines := strings.Split(overlay, "\n")
@@ -658,13 +663,11 @@ func placeOverlay(bgWidth, bgHeight int, overlay, background string) string {
 		if row >= len(bgLines) {
 			break
 		}
-		leftPad := strings.Repeat(" ", startX)
-		rightPad := bgWidth - startX - lipgloss.Width(fgLine)
-		right := ""
-		if rightPad > 0 {
-			right = strings.Repeat(" ", rightPad)
-		}
-		bgLines[row] = leftPad + fgLine + right
+		// Split background line at visual column boundaries,
+		// keeping styled content on both sides of the overlay
+		left := ansi.Truncate(bgLines[row], startX, "")
+		right := ansi.TruncateLeft(bgLines[row], startX+fgWidth, "")
+		bgLines[row] = left + fgLine + right
 	}
 
 	return strings.Join(bgLines, "\n")

@@ -237,12 +237,8 @@ func (p *Parser) extractLinkArrayChildren(data []byte, parentPath string, childr
 }
 
 // extractNameFromPath extracts the last segment of a path
-func (p *Parser) extractNameFromPath(path string) string {
-	parts := strings.Split(strings.TrimRight(path, "/"), "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-	return ""
+func (p *Parser) extractNameFromPath(linkPath string) string {
+	return BaseName(linkPath)
 }
 
 // classifyLink determines if a link is a child or external symlink
