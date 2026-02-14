@@ -11,7 +11,7 @@ tasks:
 
   build:
     desc: Build all binaries
-    deps: [build:bfsh, build:bfui]
+    deps: [build:bfsh, build:btsh, build:bfui]
 
   build:bfsh:
     desc: Build bfsh shell
@@ -24,6 +24,18 @@ tasks:
       - go.sum
     generates:
       - "{{.BIN_DIR}}/bfsh"
+
+  build:btsh:
+    desc: Build btsh shell (bubbletea)
+    cmds:
+      - go build -o {{.BIN_DIR}}/btsh ./cmd/btsh
+    sources:
+      - cmd/btsh/*.go
+      - rvfs/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BIN_DIR}}/btsh"
 
   build:bfui:
     desc: Build bfui TUI

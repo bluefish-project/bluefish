@@ -18,6 +18,7 @@
 
 # Build artifacts
 /bin/
+/btsh
 
 # Cache files
 .bfsh_cache_*.json
