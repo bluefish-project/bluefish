@@ -357,7 +357,7 @@ func (a *ActionModel) viewResult(b *strings.Builder) {
 }
 
 // discoverActions finds all actions on a resource
-func discoverActions(resource *rvfs.Resource) []ActionInfo {
+func discoverActions(vfs rvfs.VFS, resource *rvfs.Resource) []ActionInfo {
 	if resource == nil {
 		return nil
 	}
@@ -404,6 +404,35 @@ func discoverActions(resource *rvfs.Resource) []ActionInfo {
 					}
 				}
 				info.Allowable[paramName] = values
+			}
+		}
+
+		// Fetch ActionInfo resource for parameters if no inline AllowableValues
+		if info.InfoURI != "" && len(info.Allowable) == 0 {
+			if aiResource, err := vfs.Get(info.InfoURI); err == nil {
+				if paramsProp, ok := aiResource.Properties["Parameters"]; ok && paramsProp.Type == rvfs.PropertyArray {
+					for _, elem := range paramsProp.Elements {
+						if elem.Type != rvfs.PropertyObject {
+							continue
+						}
+						name := ""
+						if n, ok := elem.Children["Name"]; ok && n.Type == rvfs.PropertySimple {
+							name = fmt.Sprintf("%v", n.Value)
+						}
+						if name == "" {
+							continue
+						}
+						if av, ok := elem.Children["AllowableValues"]; ok && av.Type == rvfs.PropertyArray {
+							var values []string
+							for _, v := range av.Elements {
+								if v.Type == rvfs.PropertySimple {
+									values = append(values, fmt.Sprintf("%v", v.Value))
+								}
+							}
+							info.Allowable[name] = values
+						}
+					}
+				}
 			}
 		}
 

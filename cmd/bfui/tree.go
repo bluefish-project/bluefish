@@ -76,11 +76,7 @@ func (t *TreeModel) Init(resource *rvfs.Resource, basePath string) {
 }
 
 func (t *TreeModel) buildResourceNode(resource *rvfs.Resource, path string, depth int) *treeNode {
-	name := path
-	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
-	if len(parts) > 0 {
-		name = parts[len(parts)-1]
-	}
+	name := rvfs.BaseName(path)
 	if path == rvfs.RedfishRoot {
 		name = "Root"
 	}
