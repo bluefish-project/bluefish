@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -83,6 +85,10 @@ func executeCommandAsync(nav *Navigator, cmd string, args []string) tea.Cmd {
 			output, err := nav.tree(depth)
 			return commandResultMsg{output: output, err: err}
 		}
+
+	case "export":
+		// Handled as a stepped operation in handleReadyKey
+		return nil
 
 	case "find":
 		if len(args) == 0 {
@@ -465,6 +471,181 @@ func finishFind(state *shellState) string {
 	}
 	return fmt.Sprintf("%d matches (%d resources searched, %s)",
 		state.findResults, state.findSearched, elapsed.Round(time.Millisecond))
+}
+
+// startExport initiates the export process
+func startExport(state *shellState, filename string) tea.Cmd {
+	nav := state.nav
+
+	if filename == "" {
+		filename = "export_" + time.Now().Format("20060102T150405") + ".json"
+	}
+
+	// Build set of already cached paths
+	cached := make(map[string]bool)
+	for _, p := range nav.vfs.GetKnownPaths() {
+		cached[p] = true
+	}
+
+	// BFS from cwd to discover all reachable paths
+	visited := make(map[string]bool)
+	frontier := []string{nav.cwd}
+	collected := make(map[string]json.RawMessage)
+	var queue []string
+
+	for len(frontier) > 0 {
+		p := frontier[0]
+		frontier = frontier[1:]
+		if visited[p] {
+			continue
+		}
+		visited[p] = true
+
+		if !cached[p] {
+			queue = append(queue, p)
+			continue
+		}
+
+		// Pre-collect cached resources
+		res, err := nav.vfs.Get(p)
+		if err != nil {
+			continue
+		}
+		if len(res.RawJSON) > 0 {
+			collected[p] = json.RawMessage(res.RawJSON)
+		}
+		for _, child := range res.Children {
+			if !visited[child.Target] {
+				frontier = append(frontier, child.Target)
+			}
+		}
+	}
+
+	state.exportQueue = queue
+	state.exportVisited = visited
+	state.exportCollected = collected
+	state.exportDone = 0
+	state.exportTotal = len(queue)
+	state.exportErrors = nil
+	state.exportCancelled = false
+	state.exportStart = time.Now()
+	state.exportFilename = filename
+
+	if len(queue) == 0 {
+		return finishExport(state)
+	}
+
+	// Fetch first item
+	path := state.exportQueue[0]
+	return func() tea.Msg {
+		return exportStepMsg{path: path}
+	}
+}
+
+// handleExportStep processes one export fetch and chains the next.
+// Returns a tea.Cmd (nil when done).
+func handleExportStep(state *shellState, msg exportStepMsg) tea.Cmd {
+	if state.exportCancelled {
+		return finishExport(state)
+	}
+
+	nav := state.nav
+	res, err := nav.vfs.Get(msg.path)
+
+	// Remove from front of queue
+	if len(state.exportQueue) > 0 && state.exportQueue[0] == msg.path {
+		state.exportQueue = state.exportQueue[1:]
+	}
+	state.exportDone++
+
+	if err != nil {
+		state.exportErrors = append(state.exportErrors, fmt.Sprintf("  %s: %s", msg.path, err.Error()))
+	} else {
+		// Collect the raw JSON
+		if len(res.RawJSON) > 0 {
+			state.exportCollected[msg.path] = json.RawMessage(res.RawJSON)
+		}
+		// Discover new children
+		for _, child := range res.Children {
+			if !state.exportVisited[child.Target] {
+				state.exportVisited[child.Target] = true
+				state.exportQueue = append(state.exportQueue, child.Target)
+				state.exportTotal++
+			}
+		}
+	}
+
+	// Update spinner label
+	errPart := ""
+	if len(state.exportErrors) > 0 {
+		errPart = fmt.Sprintf(", %d errors", len(state.exportErrors))
+	}
+	state.spinnerLabel = fmt.Sprintf("Exporting %s  (%d/%d%s)", msg.path, state.exportDone, state.exportTotal, errPart)
+
+	// Chain next fetch or finish
+	if len(state.exportQueue) == 0 {
+		return finishExport(state)
+	}
+
+	nextPath := state.exportQueue[0]
+	return func() tea.Msg {
+		return exportStepMsg{path: nextPath}
+	}
+}
+
+// finishExport writes collected data to a JSON file and returns a result message
+func finishExport(state *shellState) tea.Cmd {
+	elapsed := time.Since(state.exportStart)
+
+	if state.exportCancelled {
+		// Clean up state, no file written
+		output := fmt.Sprintf("Export cancelled: %d fetched, %d collected, %s",
+			state.exportDone, len(state.exportCollected), elapsed.Round(time.Millisecond))
+		state.exportQueue = nil
+		state.exportVisited = nil
+		state.exportCollected = nil
+		state.exportErrors = nil
+		return func() tea.Msg {
+			return commandResultMsg{output: output}
+		}
+	}
+
+	// Write JSON file
+	data, err := json.MarshalIndent(state.exportCollected, "", "  ")
+	if err != nil {
+		state.exportQueue = nil
+		state.exportVisited = nil
+		state.exportCollected = nil
+		state.exportErrors = nil
+		return func() tea.Msg {
+			return commandResultMsg{err: fmt.Errorf("marshal failed: %v", err)}
+		}
+	}
+
+	filename := state.exportFilename
+	writeErr := os.WriteFile(filename, data, 0644)
+
+	var b strings.Builder
+	if writeErr != nil {
+		fmt.Fprintf(&b, "Error writing %s: %v", filename, writeErr)
+	} else {
+		fmt.Fprintf(&b, "Exported %d resources to %s (%s)", len(state.exportCollected), filename, elapsed.Round(time.Millisecond))
+	}
+	for _, msg := range state.exportErrors {
+		b.WriteString("\n")
+		b.WriteString(msg)
+	}
+
+	// Clean up export state
+	state.exportQueue = nil
+	state.exportVisited = nil
+	state.exportCollected = nil
+	state.exportErrors = nil
+
+	output := b.String()
+	return func() tea.Msg {
+		return commandResultMsg{output: output}
+	}
 }
 
 func finishScrape(state *shellState) tea.Cmd {
