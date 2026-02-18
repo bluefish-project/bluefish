@@ -15,6 +15,7 @@ type NormalKeyMap struct {
 	Home       key.Binding
 	Refresh    key.Binding
 	Scrape     key.Binding
+	Export     key.Binding
 	ScrollDown key.Binding
 	ScrollUp   key.Binding
 	Search     key.Binding
@@ -67,6 +68,10 @@ var normalKeys = NormalKeyMap{
 	Scrape: key.NewBinding(
 		key.WithKeys("s"),
 		key.WithHelp("s", "scrape"),
+	),
+	Export: key.NewBinding(
+		key.WithKeys("x"),
+		key.WithHelp("x", "export"),
 	),
 	ScrollDown: key.NewBinding(
 		key.WithKeys("J"),

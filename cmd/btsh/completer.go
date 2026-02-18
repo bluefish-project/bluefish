@@ -15,7 +15,7 @@ var pathCommands = map[string]bool{
 // all commands for command-position completion
 var allCommands = []string{
 	"cd", "ls", "ll", "pwd", "dump", "tree", "find", "open",
-	"scrape", "refresh",
+	"scrape", "export", "refresh",
 	"cache", "clear", "help", "exit", "quit",
 }
 

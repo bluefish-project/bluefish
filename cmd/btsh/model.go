@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -59,6 +60,17 @@ type shellState struct {
 	findTotal     int
 	findCancelled bool
 	findStart     time.Time
+
+	// Export state
+	exportQueue     []string
+	exportVisited   map[string]bool
+	exportCollected map[string]json.RawMessage
+	exportDone      int
+	exportTotal     int
+	exportErrors    []string
+	exportCancelled bool
+	exportStart     time.Time
+	exportFilename  string
 
 	// Track if we were in action mode before a command
 	inActionMode bool
@@ -130,6 +142,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case findStepMsg:
 		return m.handleFindStep(msg)
+
+	case exportStepMsg:
+		return m.handleExportStep(msg)
 
 	case actionDiscoveredMsg:
 		return m.handleActionDiscovered(msg)
@@ -209,6 +224,18 @@ func (m model) handleReadyKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = ModeRunning
 			m.state.spinnerLabel = "Starting scrape..."
 			cmd := startScrape(m.state)
+			return m, tea.Batch(tea.Println(echo), cmd)
+		}
+
+		// Handle export specially (needs state)
+		if line == "export" || strings.HasPrefix(line, "export ") {
+			filename := ""
+			if strings.HasPrefix(line, "export ") {
+				filename = strings.TrimSpace(line[7:])
+			}
+			m.mode = ModeRunning
+			m.state.spinnerLabel = "Starting export..."
+			cmd := startExport(m.state, filename)
 			return m, tea.Batch(tea.Println(echo), cmd)
 		}
 
@@ -312,6 +339,9 @@ func (m model) handleRunningKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.state.findQueue) > 0 {
 			m.state.findCancelled = true
+		}
+		if len(m.state.exportQueue) > 0 {
+			m.state.exportCancelled = true
 		}
 	}
 	return m, nil
@@ -509,6 +539,19 @@ func (m model) handleFindStep(msg findStepMsg) (tea.Model, tea.Cmd) {
 	}
 	if output != "" {
 		return m, tea.Batch(tea.Println(output), cmd)
+	}
+	return m, cmd
+}
+
+func (m model) handleExportStep(msg exportStepMsg) (tea.Model, tea.Cmd) {
+	cmd := handleExportStep(m.state, msg)
+	if cmd == nil {
+		// Export finished — clean up and transition back to ready
+		m.mode = ModeReady
+		m.input.Prompt = promptPathStyle.Render(m.state.nav.cwd) + "> "
+		m.input.Focus()
+		m.state.spinnerLabel = ""
+		m.updateSuggestions()
 	}
 	return m, cmd
 }

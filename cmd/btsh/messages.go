@@ -39,6 +39,11 @@ type actionDiscoveredMsg struct {
 	body    []byte // JSON body for confirm
 }
 
+// exportStepMsg triggers the next export fetch step
+type exportStepMsg struct {
+	path string
+}
+
 // actionResultMsg is sent when a POST action completes
 type actionResultMsg struct {
 	status int

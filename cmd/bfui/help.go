@@ -49,6 +49,7 @@ func helpContent() string {
 	section("Other")
 	row("r", "Refresh current resource")
 	row("s", "Scrape (crawl uncached resources)")
+	row("x", "Export resources to JSON file")
 	row("q / ctrl+c", "Quit")
 	b.WriteString("\n")
 

@@ -24,6 +24,7 @@ const (
 	ModeAction
 	ModeHelp
 	ModeScrape
+	ModeExport
 )
 
 // Model is the root Bubble Tea model
@@ -38,6 +39,7 @@ type Model struct {
 	search     SearchModel
 	action     ActionModel
 	scrape     ScrapeModel
+	export     ExportModel
 
 	width, height    int
 	mode             Mode
@@ -57,6 +59,7 @@ func NewModel(vfs rvfs.VFS) Model {
 		search:     NewSearchModel(),
 		action:     NewActionModel(),
 		scrape:     NewScrapeModel(vfs),
+		export:     NewExportModel(vfs),
 	}
 }
 
@@ -101,6 +104,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scrapeDoneMsg:
 		cmd := m.scrape.HandleDone(msg)
 		return m, cmd
+
+	case exportTickMsg:
+		cmd := m.export.HandleTick(msg.Path)
+		return m, cmd
+
+	case exportDoneMsg:
+		cmd := m.export.HandleDone(msg)
+		return m, cmd
+
+	case exportWrittenMsg:
+		m.export.HandleWritten(msg)
+		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -174,6 +189,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleHelpKey(msg)
 	case ModeScrape:
 		return m.handleScrapeKey(msg)
+	case ModeExport:
+		return m.handleExportKey(msg)
 	}
 	return m, nil
 }
@@ -231,6 +248,9 @@ func (m Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, normalKeys.Scrape):
 		return m.handleScrape()
+
+	case key.Matches(msg, normalKeys.Export):
+		return m.handleExport()
 
 	case key.Matches(msg, normalKeys.ScrollDown):
 		m.details.ScrollDown()
@@ -358,6 +378,23 @@ func (m Model) handleScrapeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.recalcLayout()
 	}
 	return m, nil
+}
+
+func (m Model) handleExportKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, overlayKeys.Cancel) {
+		m.mode = ModeNormal
+		m.export.Close()
+		m.recalcLayout()
+	}
+	return m, nil
+}
+
+func (m Model) handleExport() (tea.Model, tea.Cmd) {
+	m.mode = ModeExport
+	m.recalcLayout()
+	filename := "export_" + time.Now().Format("20060102T150405") + ".json"
+	cmd := m.export.Start(m.basePath, filename)
+	return m, cmd
 }
 
 // handleEnter: navigate into the selected item, pushing current root
@@ -556,6 +593,8 @@ func (m *Model) recalcLayout() {
 		m.action.height = innerH
 		m.scrape.width = innerW
 		m.scrape.height = innerH
+		m.export.width = innerW
+		m.export.height = innerH
 	}
 }
 
@@ -626,6 +665,9 @@ func (m Model) renderOverlay() (string, bool) {
 	case ModeScrape:
 		inner = m.scrape.View()
 		w, h = m.scrape.width, m.scrape.height
+	case ModeExport:
+		inner = m.export.View()
+		w, h = m.export.width, m.export.height
 	default:
 		return "", false
 	}
@@ -718,6 +760,7 @@ func (m Model) viewHelpBar() string {
 			"/", "search",
 			"!", "action",
 			"s", "scrape",
+			"x", "export",
 			"?", "help",
 		}
 	case ModeSearch:
@@ -730,7 +773,7 @@ func (m Model) viewHelpBar() string {
 		pairs = []string{
 			"esc", "back",
 		}
-	case ModeHelp, ModeScrape:
+	case ModeHelp, ModeScrape, ModeExport:
 		pairs = []string{
 			"esc", "close",
 		}

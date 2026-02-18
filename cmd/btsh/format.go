@@ -453,6 +453,7 @@ func formatHelp() string {
 	b.WriteString(boldStyle.Render("Fetching"))
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "  %s %-12s %s\n", cmd("scrape"), "", "Crawl all reachable resources from cwd")
+	fmt.Fprintf(&b, "  %s %-12s %s\n", cmd("export"), arg("[file]"), "Export resources to JSON file")
 	fmt.Fprintf(&b, "  %s %-12s %s\n", cmd("refresh"), arg("[path]"), "Re-fetch a resource (invalidate + fetch)")
 
 	b.WriteString("\n")
